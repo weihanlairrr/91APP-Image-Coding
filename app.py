@@ -183,7 +183,7 @@ preprocess = transforms.Compose([
 ])
 
 # 加載保存的圖片特徵
-with open('C:/Users/albertlai/Desktop/python/91APP-AI-Image-Embedding/image_features.pkl', 'rb') as f:
+with open('image_features.pkl', 'rb') as f:
     features_by_category = pickle.load(f)
 
 if 'file_uploader_key1' not in st.session_state:
