@@ -113,7 +113,7 @@ def rename_numbers_in_folder(results):
                 result["編號"] = f'{idx+1:02}'
             else:
                 result["編號"] = "超過上限"
-
+    
     return results
 
 # 重命名並打包資料夾及 Excel 檔案
@@ -167,7 +167,6 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
 
     return zip_buffer.getvalue()
 
-    
 # 初始化 ResNet 模型
 device = "cuda" if torch.cuda.is_available() else "cpu"
 resnet = models.resnet50(pretrained=True)
@@ -217,13 +216,16 @@ if uploaded_zip and start_running:
 
     unzip_file("temp.zip")
 
-    special_angle_mappings = {}
+    special_mappings = {}
     if selected_brand == "ADS":
         df_angles = pd.read_excel("ADS檔名角度對照表.xlsx")
         for idx, row in df_angles.iterrows():
-            keyword = str(row.iloc[0]).strip()
-            angle = str(row.iloc[1]).strip()
-            special_angle_mappings[keyword] = angle
+            keyword = str(row['檔名判斷']).strip()
+            category = str(row['商品分類']).strip()
+            if category == 'nan' or category == '':
+                category = None
+            angle = str(row['對應角度']).strip()
+            special_mappings[keyword] = {'category': category, 'angle': angle}
 
     image_folders = [f for f in os.listdir("uploaded_images") if os.path.isdir(os.path.join("uploaded_images", f)) and not f.startswith('__MACOSX')]
     results = []
@@ -242,6 +244,7 @@ if uploaded_zip and start_running:
         progress_text.text(f"正在處理資料夾: {folder}")
 
         special_images = []
+        folder_special_category = None  # 用於儲存資料夾的特殊商品分類
 
         for image_file in image_files:
             image_path = os.path.join(folder_path, image_file)
@@ -253,18 +256,24 @@ if uploaded_zip and start_running:
                 continue
 
             special_angle = None
-            if special_angle_mappings:
-                for substr, angle in special_angle_mappings.items():
+            special_category = None
+            if special_mappings:
+                for substr, mapping in special_mappings.items():
                     if substr in image_file:
-                        special_angle = angle
+                        special_angle = mapping['angle']
+                        special_category = mapping['category']
                         break
+
+            if special_category and not folder_special_category:
+                folder_special_category = special_category
 
             img = Image.open(image_path).convert('RGB')
             img_features = get_image_features(img, resnet)
             folder_features.append({
                 "image_file": image_file,
                 "features": img_features,
-                "special_angle": special_angle
+                "special_angle": special_angle,
+                "special_category": special_category
             })
 
             if special_angle:
@@ -274,24 +283,27 @@ if uploaded_zip and start_running:
                 })
 
         best_category = None
-        best_similarity = -1
 
         if len(folder_features) == 0:
             st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
             continue
 
-        for img_data in folder_features:
-            img_features = img_data["features"]
+        if folder_special_category:
+            best_category = {'brand': selected_brand, 'category': folder_special_category}
+        else:
+            best_similarity = -1
+            for img_data in folder_features:
+                img_features = img_data["features"]
 
-            for brand in features_by_category:
-                for category in features_by_category[brand]:
-                    for item in features_by_category[brand][category]["labeled_features"]:
-                        item_features = item["features"]
-                        similarity = cosine_similarity(img_features, item_features)
+                for brand in features_by_category:
+                    for category in features_by_category[brand]:
+                        for item in features_by_category[brand][category]["labeled_features"]:
+                            item_features = item["features"]
+                            similarity = cosine_similarity(img_features, item_features)
 
-                        if similarity > best_similarity:
-                            best_similarity = similarity
-                            best_category = item["labels"]
+                            if similarity > best_similarity:
+                                best_similarity = similarity
+                                best_category = item["labels"]
 
         filtered_by_category = features_by_category[selected_brand][best_category["category"]]["labeled_features"]
 
@@ -304,6 +316,7 @@ if uploaded_zip and start_running:
         for img_data in folder_features:
             image_file = img_data["image_file"]
             special_angle = img_data["special_angle"]
+            special_category = img_data["special_category"]
 
             if special_angle:
                 if special_angle != "細節" and special_angle in used_angles:
@@ -331,7 +344,7 @@ if uploaded_zip and start_running:
 
         non_special_images = [img_data for img_data in folder_features if not img_data["special_angle"]]
 
-        if not special_angle_mappings:
+        if not special_mappings:
             non_special_images = folder_features
 
         image_similarity_store = {}
@@ -373,7 +386,7 @@ if uploaded_zip and start_running:
                     "圖片": image_file,
                     "品牌": similarity_list[0]["label"]["brand"],
                     "商品分類": similarity_list[0]["label"]["category"],
-                    "角度": similarity_list[0]["label"]["angle"],
+                    "角度": first_label_angle,
                     "編號": similarity_list[0]["label"]["number"],
                     "預測信心": f"{similarity_list[0]['similarity'] * 100:.2f}%"
                 }
