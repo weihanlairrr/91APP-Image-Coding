@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 # 輸入的JSON資料
-json_input = '{"IH7795":"7","JR7675":"10","JR7674":"9","JR7676":"10","IF1371":"7"}'
+json_input = '{"IH7795":"7","JR7675":"10"}'
 
 # 根據貨號與張數產生圖片網址
 def generate_urls(catalog, count):
