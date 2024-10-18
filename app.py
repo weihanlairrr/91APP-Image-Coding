@@ -99,7 +99,7 @@ def unzip_file(uploaded_zip):
             zip_ref.extract(member, "uploaded_images")
 
 # 定義需要跳過的關鍵字
-keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_FR_", "_Fout_", "-1", "_Sid_", "_SUPV_", "_SUPS_", "_HM_","_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
+keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_FR_", "_Fout_", "-1", "_Sid_", "_HM_","_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
 
 def rename_numbers_in_folder(results):
     folders = set([result["資料夾名稱"] for result in results])
