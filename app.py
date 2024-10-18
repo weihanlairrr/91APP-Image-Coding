@@ -68,7 +68,6 @@ def cosine_similarity(a, b):
 
 def reset_file_uploader():
     st.session_state['file_uploader_key1'] += 1
-    st.session_state['file_uploader_key2'] += 1
     if os.path.exists("uploaded_images"):
         shutil.rmtree("uploaded_images")
     if os.path.exists("temp.zip"):
@@ -187,8 +186,6 @@ with open('image_features.pkl', 'rb') as f:
 
 if 'file_uploader_key1' not in st.session_state:
     st.session_state['file_uploader_key1'] = 0
-if 'file_uploader_key2' not in st.session_state:
-    st.session_state['file_uploader_key2'] = 1
     
 st.header("TP 編圖工具")
 st.write("\n")
@@ -225,7 +222,8 @@ if uploaded_zip and start_running:
             if category == 'nan' or category == '':
                 category = None
             angle = str(row['對應角度']).strip()
-            special_mappings[keyword] = {'category': category, 'angle': angle}
+            angles = [a.strip() for a in angle.split(',')]  # 將角度轉換為列表
+            special_mappings[keyword] = {'category': category, 'angles': angles}
 
     image_folders = [f for f in os.listdir("uploaded_images") if os.path.isdir(os.path.join("uploaded_images", f)) and not f.startswith('__MACOSX')]
     results = []
@@ -255,12 +253,12 @@ if uploaded_zip and start_running:
                 skipped_images.append({"資料夾名稱": folder, "圖片": image_file})
                 continue
 
-            special_angle = None
+            special_angles = []
             special_category = None
             if special_mappings:
                 for substr, mapping in special_mappings.items():
                     if substr in image_file:
-                        special_angle = mapping['angle']
+                        special_angles = mapping['angles']
                         special_category = mapping['category']
                         break
 
@@ -272,14 +270,14 @@ if uploaded_zip and start_running:
             folder_features.append({
                 "image_file": image_file,
                 "features": img_features,
-                "special_angle": special_angle,
+                "special_angles": special_angles,
                 "special_category": special_category
             })
 
-            if special_angle:
+            if special_angles:
                 special_images.append({
                     "image_file": image_file,
-                    "special_angle": special_angle
+                    "special_angles": special_angles
                 })
 
         best_category = None
@@ -315,17 +313,16 @@ if uploaded_zip and start_running:
 
         for img_data in folder_features:
             image_file = img_data["image_file"]
-            special_angle = img_data["special_angle"]
+            special_angles = img_data["special_angles"]
             special_category = img_data["special_category"]
 
-            if special_angle:
-                if special_angle != "細節" and special_angle in used_angles:
-                    st.warning(f"資料夾 '{folder}' 中的圖片 '{image_file}' 角度 '{special_angle}' 已被使用，無法分配")
-                    final_results[image_file] = None
-                    continue
-                else:
-                    used_angles.add(special_angle)
+            if special_angles:
+                assigned = False
+                for special_angle in special_angles:
+                    if special_angle != "細節" and special_angle in used_angles:
+                        continue  # 跳過已使用的角度
                     if special_angle in angle_to_number:
+                        used_angles.add(special_angle)
                         label_info = {
                             "資料夾名稱": folder,
                             "圖片": image_file,
@@ -336,13 +333,15 @@ if uploaded_zip and start_running:
                             "預測信心": "100%"
                         }
                         final_results[image_file] = label_info
-                    else:
-                        st.warning(f"商品分類 '{best_category['category']}' 中沒有角度 '{special_angle}'，圖片 '{image_file}' 無法分配")
-                        final_results[image_file] = None
+                        assigned = True
+                        break
+                if not assigned:
+                    st.warning(f"商品分類 '{best_category['category']}' 中沒有角度 '{', '.join(special_angles)}'，圖片 '{image_file}' 無法分配")
+                    final_results[image_file] = None
             else:
                 final_results[image_file] = None
 
-        non_special_images = [img_data for img_data in folder_features if not img_data["special_angle"]]
+        non_special_images = [img_data for img_data in folder_features if not img_data["special_angles"]]
 
         if not special_mappings:
             non_special_images = folder_features
@@ -392,28 +391,6 @@ if uploaded_zip and start_running:
                 }
             else:
                 continue
-
-        for image_file, similarity_list in image_similarity_store.items():
-            if final_results[image_file] is not None:
-                continue
-
-            for i in range(1, len(similarity_list)):
-                candidate_label = similarity_list[i]["label"]
-                candidate_angle = candidate_label["angle"]
-                if candidate_angle == "細節" or candidate_angle not in used_angles:
-                    used_angles.add(candidate_angle)
-                    final_results[image_file] = {
-                        "資料夾名稱": similarity_list[i]["folder"],
-                        "圖片": image_file,
-                        "品牌": candidate_label["brand"],
-                        "商品分類": candidate_label["category"],
-                        "角度": candidate_angle,
-                        "編號": candidate_label["number"],
-                        "預測信心": f"{similarity_list[i]['similarity'] * 100:.2f}%"
-                    }
-                    break
-                else:
-                    continue
 
         for image_file, assignment in final_results.items():
             if assignment is not None:
