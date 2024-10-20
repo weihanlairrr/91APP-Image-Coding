@@ -11,6 +11,8 @@ import shutil
 import numpy as np
 import platform
 
+st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
+
 custom_css = """
     <style>
     .main {
@@ -68,34 +70,19 @@ def cosine_similarity(a, b):
 
 def reset_file_uploader():
     st.session_state['file_uploader_key1'] += 1
-    if os.path.exists("uploaded_images"):
-        shutil.rmtree("uploaded_images")
-    if os.path.exists("temp.zip"):
-        os.remove("temp.zip") 
-
+    
 # 解壓 zip 檔案並處理圖片
 def unzip_file(uploaded_zip):
     system = platform.system()
-    
     with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
         for member in zip_ref.infolist():
             if system == "Windows":
                 try:
-                    member.filename = member.filename.encode('utf-8').decode('utf-8')
+                    member.filename = member.filename.encode('cp437').decode('gbk')
                 except UnicodeDecodeError:
-                    member.filename = member.filename.encode('utf-8').decode('latin1')
-            elif system == "Darwin":
-                try:
-                    member.filename = member.filename.encode('cp437').decode('utf-8')
-                except UnicodeDecodeError:
-                    member.filename = member.filename.encode('cp437').decode('latin1')
-            else:
-                try:
-                    member.filename = member.filename.encode('utf-8').decode('utf-8')
-                except UnicodeDecodeError:
-                    member.filename = member.filename.encode('utf-8').decode('latin1')
-            
+                    member.filename = member.filename.encode('cp437').decode('utf-8', 'replace')
             zip_ref.extract(member, "uploaded_images")
+
 
 # 定義需要跳過的關鍵字
 keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_FR_", "_Fout_", "-1", "_Sid_", "_HM_","_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
@@ -413,7 +400,10 @@ if uploaded_zip and start_running:
     excel_data = excel_buffer.getvalue()
 
     zip_data = rename_and_zip_folders(results, excel_data, skipped_images)
-
+    
+    shutil.rmtree("uploaded_images")
+    os.remove("temp.zip") 
+    
     if st.download_button(
         label="下載編圖結果",
         data=zip_data,
