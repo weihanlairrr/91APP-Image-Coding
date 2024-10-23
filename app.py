@@ -14,46 +14,46 @@ import platform
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 
 custom_css = """
-    <style>
-    .main {
-        padding-left: 29%; 
-        padding-right: 29%;
-    }
-    div.block-container{padding-top:4rem;
-    }
-    .stButton > button {
-        padding: 5px 30px;
-        background: #5A5B5E!important;
-        color: #f5f5f5!important;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-        margin: 5px 0;
-    }
-    .stDownloadButton button {
-        background: #5A5B5E!important;
-        color: #f5f5f5!important;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-    }
-    [data-testid='stFileUploader'] section button {
-        color: #46474A !important;
-        border-radius: 5px;
-        border: none;
-        padding: 5px 40px;
-    }
-    .stButton > button:hover  {
-        background: #8A8B8D!important;
-    }
-    .stDownloadButton button:hover {
-        background: #8A8B8D!important;
-    }
-    button:hover  {
-        background: #D3D3D3!important;
-    }
-    </style>
-    """
+<style>
+.main {
+    padding-left: 29%; 
+    padding-right: 29%;
+}
+div.block-container{padding-top:4rem;
+}
+.stButton > button {
+    padding: 5px 30px;
+    background: #5A5B5E!important;
+    color: #f5f5f5!important;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    margin: 5px 0;
+}
+.stDownloadButton button {
+    background: #5A5B5E!important;
+    color: #f5f5f5!important;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+}
+[data-testid='stFileUploader'] section button {
+    color: #46474A !important;
+    border-radius: 5px;
+    border: none;
+    padding: 5px 40px;
+}
+.stButton > button:hover  {
+    background: #8A8B8D!important;
+}
+.stDownloadButton button:hover {
+    background: #8A8B8D!important;
+}
+button:hover  {
+    background: #D3D3D3!important;
+}
+</style>
+"""
 
 st.markdown(custom_css, unsafe_allow_html=True)
 
@@ -70,22 +70,40 @@ def cosine_similarity(a, b):
 
 def reset_file_uploader():
     st.session_state['file_uploader_key1'] += 1
-    
+    if os.path.exists("uploaded_images"):
+        shutil.rmtree("uploaded_images")
+    if os.path.exists("temp.zip"):
+        os.remove("temp.zip") 
+
 # 解壓 zip 檔案並處理圖片
 def unzip_file(uploaded_zip):
     system = platform.system()
+    
     with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
         for member in zip_ref.infolist():
             if system == "Windows":
                 try:
+                    # Windows zip 檔案中的檔名通常用 cp437 編碼
                     member.filename = member.filename.encode('cp437').decode('gbk')
                 except UnicodeDecodeError:
                     member.filename = member.filename.encode('cp437').decode('utf-8', 'replace')
+            elif system == "Darwin":
+                try:
+                    # macOS 系統一般使用的是 UTF-8 編碼
+                    member.filename = member.filename.encode('utf-8').decode('utf-8')
+                except UnicodeDecodeError:
+                    member.filename = member.filename.encode('utf-8').decode('latin1')
+            else:
+                try:
+                    # 其他系統預設使用 UTF-8
+                    member.filename = member.filename.encode('utf-8').decode('utf-8')
+                except UnicodeDecodeError:
+                    member.filename = member.filename.encode('utf-8').decode('latin1')
+            
             zip_ref.extract(member, "uploaded_images")
 
-
 # 定義需要跳過的關鍵字
-keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_FR_", "_Fout_", "-1", "_Sid_", "_HM_","_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
+keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_Fout_", "-1", "_Sid_", "_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
 
 def rename_numbers_in_folder(results):
     folders = set([result["資料夾名稱"] for result in results])
@@ -116,15 +134,18 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         
         old_image_path = os.path.join(folder_path, image_file)
 
-        if new_number == "超過上限":
+        if new_number == "超過上限" or pd.isna(new_number):
+            # 保留原檔名並移至外層資料夾
             new_image_path = os.path.join(folder_path, image_file)
         else:
+            # 重命名並移至 All 資料夾
             new_image_name = f"{folder_name}_{new_number}.jpg"
             new_image_path = os.path.join(all_folder_path, new_image_name)
-    
+        
         if os.path.exists(old_image_path):
             os.rename(old_image_path, new_image_path)
 
+    # 處理跳過的圖片
     for skipped_image in skipped_images:
         folder_name = skipped_image["資料夾名稱"]
         image_file = skipped_image["圖片"]
@@ -164,7 +185,10 @@ preprocess = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406], 
+        std=[0.229, 0.224, 0.225]
+    ),
 ])
 
 # 加載保存的圖片特徵
@@ -173,17 +197,24 @@ with open('image_features.pkl', 'rb') as f:
 
 if 'file_uploader_key1' not in st.session_state:
     st.session_state['file_uploader_key1'] = 0
-    
+
 st.header("TP 編圖工具")
 st.write("\n")
 
-uploaded_zip = st.file_uploader("上傳 zip 檔案", type=["zip"], key='file_uploader_' + str(st.session_state['file_uploader_key1']))
+uploaded_zip = st.file_uploader(
+    "上傳 zip 檔案", 
+    type=["zip"], 
+    key='file_uploader_' + str(st.session_state['file_uploader_key1'])
+)
 
 selectbox_placeholder = st.empty()
 button_placeholder = st.empty()
 if uploaded_zip:
     with selectbox_placeholder:
-        selected_brand = st.selectbox("請選擇品牌", list(features_by_category.keys()))
+        selected_brand = st.selectbox(
+            "請選擇品牌", 
+            list(features_by_category.keys())
+        )
     with button_placeholder:
         start_running = st.button("開始執行")
     
@@ -209,10 +240,17 @@ if uploaded_zip and start_running:
             if category == 'nan' or category == '':
                 category = None
             angle = str(row['對應角度']).strip()
-            angles = [a.strip() for a in angle.split(',')]  # 將角度轉換為列表
-            special_mappings[keyword] = {'category': category, 'angles': angles}
+            angles = [a.strip() for a in angle.split(',')]
+            special_mappings[keyword] = {
+                'category': category, 
+                'angles': angles
+            }
 
-    image_folders = [f for f in os.listdir("uploaded_images") if os.path.isdir(os.path.join("uploaded_images", f)) and not f.startswith('__MACOSX')]
+    image_folders = [
+        f for f in os.listdir("uploaded_images") 
+        if os.path.isdir(os.path.join("uploaded_images", f)) 
+        and not f.startswith('__MACOSX')
+    ]
     results = []
     skipped_images = []
     progress_bar = st.progress(0)
@@ -229,7 +267,7 @@ if uploaded_zip and start_running:
         progress_text.text(f"正在處理資料夾: {folder}")
 
         special_images = []
-        folder_special_category = None  # 用於儲存資料夾的特殊商品分類
+        folder_special_category = None
 
         for image_file in image_files:
             image_path = os.path.join(folder_path, image_file)
@@ -237,7 +275,10 @@ if uploaded_zip and start_running:
                 continue
             
             if any(keyword in image_file for keyword in keywords_to_skip):
-                skipped_images.append({"資料夾名稱": folder, "圖片": image_file})
+                skipped_images.append({
+                    "資料夾名稱": folder, 
+                    "圖片": image_file
+                })
                 continue
 
             special_angles = []
@@ -274,7 +315,10 @@ if uploaded_zip and start_running:
             continue
 
         if folder_special_category:
-            best_category = {'brand': selected_brand, 'category': folder_special_category}
+            best_category = {
+                'brand': selected_brand, 
+                'category': folder_special_category
+            }
         else:
             best_similarity = -1
             for img_data in folder_features:
@@ -284,15 +328,22 @@ if uploaded_zip and start_running:
                     for category in features_by_category[brand]:
                         for item in features_by_category[brand][category]["labeled_features"]:
                             item_features = item["features"]
-                            similarity = cosine_similarity(img_features, item_features)
+                            similarity = cosine_similarity(
+                                img_features, item_features
+                            )
 
                             if similarity > best_similarity:
                                 best_similarity = similarity
                                 best_category = item["labels"]
 
-        filtered_by_category = features_by_category[selected_brand][best_category["category"]]["labeled_features"]
+        filtered_by_category = features_by_category[selected_brand][
+            best_category["category"]
+        ]["labeled_features"]
 
-        angle_to_number = {item["labels"]["angle"]: item["labels"]["number"] for item in filtered_by_category}
+        angle_to_number = {
+            item["labels"]["angle"]: item["labels"]["number"] 
+            for item in filtered_by_category
+        }
 
         used_angles = set()
 
@@ -302,33 +353,95 @@ if uploaded_zip and start_running:
             image_file = img_data["image_file"]
             special_angles = img_data["special_angles"]
             special_category = img_data["special_category"]
+            img_features = img_data["features"]
 
             if special_angles:
-                assigned = False
-                for special_angle in special_angles:
-                    if special_angle != "細節" and special_angle in used_angles:
-                        continue  # 跳過已使用的角度
-                    if special_angle in angle_to_number:
-                        used_angles.add(special_angle)
-                        label_info = {
-                            "資料夾名稱": folder,
-                            "圖片": image_file,
-                            "品牌": selected_brand,
-                            "商品分類": best_category["category"],
-                            "角度": special_angle,
-                            "編號": angle_to_number[special_angle],
-                            "預測信心": "100%"
-                        }
-                        final_results[image_file] = label_info
-                        assigned = True
-                        break
-                if not assigned:
-                    st.warning(f"商品分類 '{best_category['category']}' 中沒有角度 '{', '.join(special_angles)}'，圖片 '{image_file}' 無法分配")
+                # 新增的邏輯開始
+                valid_special_angles = [
+                    angle for angle in special_angles 
+                    if angle in angle_to_number
+                ]
+                if valid_special_angles:
+                    if len(valid_special_angles) > 1:
+                        best_angle = None
+                        valid_angles_by_similarity = []
+                        
+                        for angle in valid_special_angles:
+                            max_similarity = -1
+                            for item in filtered_by_category:
+                                if item["labels"]["angle"] == angle:
+                                    sample_features = item["features"]
+                                    similarity = cosine_similarity(
+                                        img_features, sample_features
+                                    )
+                                    if similarity > max_similarity:
+                                        max_similarity = similarity
+                            
+                            valid_angles_by_similarity.append(
+                                (angle, max_similarity)
+                            )
+                        
+                        valid_angles_by_similarity.sort(
+                            key=lambda x: x[1], reverse=True
+                        )
+                        
+                        for angle, similarity in valid_angles_by_similarity:
+                            if angle != "細節" and angle in used_angles:
+                                pass
+                            else:
+                                best_angle = angle
+                                best_similarity = similarity
+                                break
+                    
+                        if best_angle:
+                            used_angles.add(best_angle)
+                            label_info = {
+                                "資料夾名稱": folder,
+                                "圖片": image_file,
+                                "品牌": selected_brand,
+                                "商品分類": best_category["category"],
+                                "角度": best_angle,
+                                "編號": angle_to_number[best_angle],
+                                "預測信心": f"{best_similarity * 100:.2f}%"
+                            }
+                            final_results[image_file] = label_info
+                        else:
+                            st.warning(
+                                f"圖片 '{image_file}' 沒有可用的角度可以分配"
+                            )
+                            final_results[image_file] = None
+                    else:
+                        special_angle = valid_special_angles[0]
+                        if special_angle != "細節" and special_angle in used_angles:
+                            st.warning(
+                                f"角度 '{special_angle}' 已被使用，圖片 '{image_file}' 無法分配"
+                            )
+                            final_results[image_file] = None
+                        else:
+                            used_angles.add(special_angle)
+                            label_info = {
+                                "資料夾名稱": folder,
+                                "圖片": image_file,
+                                "品牌": selected_brand,
+                                "商品分類": best_category["category"],
+                                "角度": special_angle,
+                                "編號": angle_to_number[special_angle],
+                                "預測信心": "100%"
+                            }
+                            final_results[image_file] = label_info
+                else:
+                    st.warning(
+                        f"商品分類 '{best_category['category']}' 中沒有角度 '{', '.join(special_angles)}'，圖片 '{image_file}' 無法分配"
+                    )
                     final_results[image_file] = None
+                # 新增的邏輯結束
             else:
                 final_results[image_file] = None
 
-        non_special_images = [img_data for img_data in folder_features if not img_data["special_angles"]]
+        non_special_images = [
+            img_data for img_data in folder_features 
+            if not img_data["special_angles"]
+        ]
 
         if not special_mappings:
             non_special_images = folder_features
@@ -337,11 +450,16 @@ if uploaded_zip and start_running:
 
         for img_data in non_special_images:
             image_file = img_data["image_file"]
+            if final_results.get(image_file) is not None:
+                continue
+
             img_features = img_data["features"]
             image_similarity_list = []
             for item in filtered_by_category:
                 item_features = item["features"]
-                similarity = cosine_similarity(img_features, item_features)
+                similarity = cosine_similarity(
+                    img_features, item_features
+                )
 
                 image_similarity_list.append({
                     "image_file": image_file,
@@ -350,34 +468,107 @@ if uploaded_zip and start_running:
                     "folder": folder
                 })
 
-            image_similarity_list.sort(key=lambda x: x["similarity"], reverse=True)
+            image_similarity_list.sort(
+                key=lambda x: x["similarity"], reverse=True
+            )
             unique_labels = []
             for candidate in image_similarity_list:
-                if candidate["label"]["angle"] not in [label["label"]["angle"] for label in unique_labels]:
+                if candidate["label"]["angle"] not in [
+                    label["label"]["angle"] for label in unique_labels
+                ]:
                     unique_labels.append(candidate)
                 if len(unique_labels) == 10:
                     break
 
             image_similarity_store[image_file] = unique_labels
 
-        for image_file, similarity_list in image_similarity_store.items():
-            if final_results[image_file] is not None:
-                continue
+        # 修改的邏輯開始
+        unassigned_images = set(image_similarity_store.keys())
 
-            first_label_angle = similarity_list[0]["label"]["angle"]
-            if first_label_angle == "細節" or first_label_angle not in used_angles:
-                used_angles.add(first_label_angle)
-                final_results[image_file] = {
-                    "資料夾名稱": similarity_list[0]["folder"],
-                    "圖片": image_file,
-                    "品牌": similarity_list[0]["label"]["brand"],
-                    "商品分類": similarity_list[0]["label"]["category"],
-                    "角度": first_label_angle,
-                    "編號": similarity_list[0]["label"]["number"],
-                    "預測信心": f"{similarity_list[0]['similarity'] * 100:.2f}%"
-                }
-            else:
-                continue
+        while unassigned_images:
+            angle_to_images = {}
+            image_current_choices = {}
+            
+            for image_file in unassigned_images:
+                similarity_list = image_similarity_store[image_file]
+                # 找到尚未被使用的最高順位角度
+                candidate = None
+                for candidate_candidate in similarity_list:
+                    candidate_angle = candidate_candidate["label"]["angle"]
+                    if candidate_angle == "細節" or candidate_angle not in used_angles:
+                        candidate = candidate_candidate
+                        break
+                else:
+                    # 沒有可用的角度
+                    candidate = None
+                    candidate_angle = None
+                
+                if candidate:
+                    candidate_angle = candidate["label"]["angle"]
+                    image_current_choices[image_file] = candidate
+                    if candidate_angle not in angle_to_images:
+                        angle_to_images[candidate_angle] = []
+                    angle_to_images[candidate_angle].append(image_file)
+            
+            assigned_in_this_round = set()
+            for angle, images in angle_to_images.items():
+                if angle == "細節":
+                    # '細節'角度可以重複使用
+                    for image_file in images:
+                        candidate = image_current_choices[image_file]
+                        final_results[image_file] = {
+                            "資料夾名稱": candidate["folder"],
+                            "圖片": image_file,
+                            "品牌": candidate["label"]["brand"],
+                            "商品分類": candidate["label"]["category"],
+                            "角度": angle,
+                            "編號": candidate["label"]["number"],
+                            "預測信心": f"{candidate['similarity'] * 100:.2f}%"
+                        }
+                        assigned_in_this_round.add(image_file)
+                elif len(images) == 1:
+                    # 只有一張圖片想要這個角度，直接分配
+                    image_file = images[0]
+                    candidate = image_current_choices[image_file]
+                    final_results[image_file] = {
+                        "資料夾名稱": candidate["folder"],
+                        "圖片": image_file,
+                        "品牌": candidate["label"]["brand"],
+                        "商品分類": candidate["label"]["category"],
+                        "角度": angle,
+                        "編號": candidate["label"]["number"],
+                        "預測信心": f"{candidate['similarity'] * 100:.2f}%"
+                    }
+                    used_angles.add(angle)
+                    assigned_in_this_round.add(image_file)
+                else:
+                    # 多張圖片想要這個角度，選擇相似度最高的圖片
+                    max_similarity = -1
+                    best_image = None
+                    for image_file in images:
+                        candidate = image_current_choices[image_file]
+                        if candidate['similarity'] > max_similarity:
+                            max_similarity = candidate['similarity']
+                            best_image = image_file
+                    # 分配角度給相似度最高的圖片
+                    candidate = image_current_choices[best_image]
+                    final_results[best_image] = {
+                        "資料夾名稱": candidate["folder"],
+                        "圖片": best_image,
+                        "品牌": candidate["label"]["brand"],
+                        "商品分類": candidate["label"]["category"],
+                        "角度": angle,
+                        "編號": candidate["label"]["number"],
+                        "預測信心": f"{candidate['similarity'] * 100:.2f}%"
+                    }
+                    used_angles.add(angle)
+                    assigned_in_this_round.add(best_image)
+                    # 其他圖片不分配，進入下一輪
+
+            unassigned_images -= assigned_in_this_round
+            if not assigned_in_this_round:
+                break
+        # 修改的邏輯結束
 
         for image_file, assignment in final_results.items():
             if assignment is not None:
