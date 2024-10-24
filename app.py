@@ -10,6 +10,7 @@ import pickle
 import shutil
 import numpy as np
 import platform
+from torchvision.models import ResNet101_Weights
 
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 
@@ -83,19 +84,16 @@ def unzip_file(uploaded_zip):
         for member in zip_ref.infolist():
             if system == "Windows":
                 try:
-                    # Windows zip 檔案中的檔名通常用 cp437 編碼
-                    member.filename = member.filename.encode('cp437').decode('gbk')
-                except UnicodeDecodeError:
-                    member.filename = member.filename.encode('cp437').decode('utf-8', 'replace')
-            elif system == "Darwin":
-                try:
-                    # macOS 系統一般使用的是 UTF-8 編碼
                     member.filename = member.filename.encode('utf-8').decode('utf-8')
                 except UnicodeDecodeError:
                     member.filename = member.filename.encode('utf-8').decode('latin1')
+            elif system == "Darwin":
+                try:
+                    member.filename = member.filename.encode('cp437').decode('utf-8')
+                except UnicodeDecodeError:
+                    member.filename = member.filename.encode('cp437').decode('latin1')
             else:
                 try:
-                    # 其他系統預設使用 UTF-8
                     member.filename = member.filename.encode('utf-8').decode('utf-8')
                 except UnicodeDecodeError:
                     member.filename = member.filename.encode('utf-8').decode('latin1')
@@ -176,7 +174,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
 
 # 初始化 ResNet 模型
 device = "cuda" if torch.cuda.is_available() else "cpu"
-resnet = models.resnet50(pretrained=True)
+resnet = models.resnet101(weights=ResNet101_Weights.IMAGENET1K_V1)
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  
 resnet.eval().to(device)
 
