@@ -10,7 +10,6 @@ import pickle
 import shutil
 import numpy as np
 import platform
-from torchvision.models import ResNet101_Weights
 
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 
@@ -174,7 +173,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
 
 # 初始化 ResNet 模型
 device = "cuda" if torch.cuda.is_available() else "cpu"
-resnet = models.resnet101(weights=ResNet101_Weights.IMAGENET1K_V1)
+resnet = models.resnet101(pretrained=True)
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  
 resnet.eval().to(device)
 
