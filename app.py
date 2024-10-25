@@ -10,6 +10,7 @@ import pickle
 import shutil
 import numpy as np
 import platform
+from torchvision.models import ResNet101_Weights
 
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 
@@ -173,7 +174,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
 
 # 初始化 ResNet 模型
 device = "cuda" if torch.cuda.is_available() else "cpu"
-resnet = models.resnet101(pretrained=True)
+resnet = models.resnet101(weights=ResNet101_Weights.IMAGENET1K_V1)
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  
 resnet.eval().to(device)
 
@@ -256,6 +257,22 @@ if uploaded_zip and start_running:
     total_folders = len(image_folders)
     processed_folders = 0
 
+    # 定義組合條件
+    group_conditions = [
+        {
+            "set_a": ['_D1_', '_D2_', '_D3_'],
+            "set_b": ['_H1_', '_H2_', '_H3_']
+        },
+        {
+            "set_a": ['_SC_'],
+            "set_b": ['_Sid_Torso_']
+        },
+        {
+            "set_a": ['_W_Model_'],
+            "set_b": ['_Sid_Model_']
+        }
+    ]
+
     for folder in image_folders:
         folder_path = os.path.join("uploaded_images", folder)
         image_files = os.listdir(folder_path)
@@ -266,16 +283,52 @@ if uploaded_zip and start_running:
         special_images = []
         folder_special_category = None
 
+        # 初始化組合存在標誌
+        group_presence = []
+        for group in group_conditions:
+            group_presence.append({
+                "set_a_present": False,
+                "set_b_present": False
+            })
+
+        # 第一次掃描：檢查檔名中是否存在組合的字串
+        for image_file in image_files:
+            if image_file.startswith('.') or os.path.isdir(os.path.join(folder_path, image_file)):
+                continue
+
+            for idx, group in enumerate(group_conditions):
+                if any(substr in image_file for substr in group["set_a"]):
+                    group_presence[idx]["set_a_present"] = True
+                if any(substr in image_file for substr in group["set_b"]):
+                    group_presence[idx]["set_b_present"] = True
+
+        # 現在處理圖片
         for image_file in image_files:
             image_path = os.path.join(folder_path, image_file)
             if image_file.startswith('.') or os.path.isdir(image_path):
                 continue
-            
+
             if any(keyword in image_file for keyword in keywords_to_skip):
                 skipped_images.append({
                     "資料夾名稱": folder, 
                     "圖片": image_file
                 })
+                continue
+
+            # 檢查是否需要跳過處理
+            skip_image = False
+            for idx, group in enumerate(group_conditions):
+                if any(substr in image_file for substr in group["set_b"]):
+                    if group_presence[idx]["set_a_present"] and group_presence[idx]["set_b_present"]:
+                        # 跳過處理此圖片
+                        skipped_images.append({
+                            "資料夾名稱": folder, 
+                            "圖片": image_file
+                        })
+                        skip_image = True
+                        break
+
+            if skip_image:
                 continue
 
             special_angles = []
