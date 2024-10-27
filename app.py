@@ -10,7 +10,7 @@ import pickle
 import shutil
 import numpy as np
 import platform
-from torchvision.models import ResNet101_Weights
+from torchvision.models import ResNet50_Weights
 
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 
@@ -58,6 +58,26 @@ button:hover  {
 
 st.markdown(custom_css, unsafe_allow_html=True)
 
+# 初始化 ResNet 模型
+device = "cuda" if torch.cuda.is_available() else "cpu"
+resnet = models.resnet50(weights=ResNet50_Weights.DEFAULT)
+resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  
+resnet.eval().to(device)
+
+# 圖片預處理
+preprocess = transforms.Compose([
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
+    transforms.Normalize(
+        mean=[0.485, 0.456, 0.406], 
+        std=[0.229, 0.224, 0.225]
+    ),
+])
+
+# 定義需要跳過的關鍵字
+keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_Fout_", "-1", "_Sid_", "_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
+
 # 定義提取特徵的函數
 def get_image_features(image, model):
     image = preprocess(image).unsqueeze(0).to(device)
@@ -82,6 +102,9 @@ def unzip_file(uploaded_zip):
     
     with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
         for member in zip_ref.infolist():
+            if "__MACOSX" in member.filename or member.filename.startswith('.'):
+                continue
+            
             if system == "Windows":
                 try:
                     member.filename = member.filename.encode('utf-8').decode('utf-8')
@@ -100,8 +123,17 @@ def unzip_file(uploaded_zip):
             
             zip_ref.extract(member, "uploaded_images")
 
-# 定義需要跳過的關鍵字
-keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_Fout_", "-1", "_Sid_", "_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
+def get_images_in_folder(folder_path):
+    image_files = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            if file.startswith('.') or os.path.isdir(os.path.join(root, file)):
+                continue
+            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
+                full_image_path = os.path.join(root, file)
+                relative_image_path = os.path.relpath(full_image_path, folder_path)
+                image_files.append((relative_image_path, full_image_path))
+    return image_files
 
 def rename_numbers_in_folder(results):
     folders = set([result["資料夾名稱"] for result in results])
@@ -140,6 +172,9 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
             new_image_name = f"{folder_name}_{new_number}.jpg"
             new_image_path = os.path.join(all_folder_path, new_image_name)
         
+        # Ensure the destination directory exists
+        os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+
         if os.path.exists(old_image_path):
             os.rename(old_image_path, new_image_path)
 
@@ -171,23 +206,6 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         zipf.writestr("編圖結果.xlsx", output_excel_data)
 
     return zip_buffer.getvalue()
-
-# 初始化 ResNet 模型
-device = "cuda" if torch.cuda.is_available() else "cpu"
-resnet = models.resnet101(weights=ResNet101_Weights.IMAGENET1K_V1)
-resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  
-resnet.eval().to(device)
-
-# 圖片預處理
-preprocess = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406], 
-        std=[0.229, 0.224, 0.225]
-    ),
-])
 
 # 加載保存的圖片特徵
 with open('image_features.pkl', 'rb') as f:
@@ -247,7 +265,7 @@ if uploaded_zip and start_running:
     image_folders = [
         f for f in os.listdir("uploaded_images") 
         if os.path.isdir(os.path.join("uploaded_images", f)) 
-        and not f.startswith('__MACOSX')
+        and not f.startswith('__MACOSX') and not f.startswith('.')
     ]
     results = []
     skipped_images = []
@@ -275,7 +293,10 @@ if uploaded_zip and start_running:
 
     for folder in image_folders:
         folder_path = os.path.join("uploaded_images", folder)
-        image_files = os.listdir(folder_path)
+        image_files = get_images_in_folder(folder_path)
+        if not image_files:
+            st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
+            continue
         folder_features = []
 
         progress_text.text(f"正在處理資料夾: {folder}")
@@ -292,8 +313,8 @@ if uploaded_zip and start_running:
             })
 
         # 第一次掃描：檢查檔名中是否存在組合的字串
-        for image_file in image_files:
-            if image_file.startswith('.') or os.path.isdir(os.path.join(folder_path, image_file)):
+        for image_file, image_path in image_files:
+            if image_file.startswith('.') or os.path.isdir(image_path):
                 continue
 
             for idx, group in enumerate(group_conditions):
@@ -303,8 +324,7 @@ if uploaded_zip and start_running:
                     group_presence[idx]["set_b_present"] = True
 
         # 現在處理圖片
-        for image_file in image_files:
-            image_path = os.path.join(folder_path, image_file)
+        for image_file, image_path in image_files:
             if image_file.startswith('.') or os.path.isdir(image_path):
                 continue
 
@@ -399,6 +419,9 @@ if uploaded_zip and start_running:
 
         final_results = {}
 
+        # 初始化標誌
+        assigned_special_D_angle = False
+
         for img_data in folder_features:
             image_file = img_data["image_file"]
             special_angles = img_data["special_angles"]
@@ -455,6 +478,9 @@ if uploaded_zip and start_running:
                                 "預測信心": f"{best_similarity * 100:.2f}%"
                             }
                             final_results[image_file] = label_info
+                            # 新增檢查
+                            if best_angle in ["D1", "D2", "D3"]:
+                                assigned_special_D_angle = True
                         else:
                             st.warning(
                                 f"圖片 '{image_file}' 沒有可用的角度可以分配"
@@ -476,9 +502,12 @@ if uploaded_zip and start_running:
                                 "商品分類": best_category["category"],
                                 "角度": special_angle,
                                 "編號": angle_to_number[special_angle],
-                                "預測信心": "100%"
+                                "預測信心": "100.00%"
                             }
                             final_results[image_file] = label_info
+                            # 新增檢查
+                            if special_angle in ["D1", "D2", "D3"]:
+                                assigned_special_D_angle = True
                 else:
                     st.warning(
                         f"商品分類 '{best_category['category']}' 中沒有角度 '{', '.join(special_angles)}'，圖片 '{image_file}' 無法分配"
@@ -506,6 +535,10 @@ if uploaded_zip and start_running:
             img_features = img_data["features"]
             image_similarity_list = []
             for item in filtered_by_category:
+                item_angle = item["labels"]["angle"]
+                # 新增條件，當已分配 D1、D2、D3 時，不再分配 "細節"
+                if assigned_special_D_angle and item_angle == "細節":
+                    continue
                 item_features = item["features"]
                 similarity = cosine_similarity(
                     img_features, item_features
