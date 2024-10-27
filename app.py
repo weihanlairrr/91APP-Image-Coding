@@ -459,7 +459,7 @@ if uploaded_zip and start_running:
                         )
                         
                         for angle, similarity in valid_angles_by_similarity:
-                            if angle != "細節" and angle in used_angles:
+                            if angle not in ["細節", "情境細節"] and angle in used_angles:
                                 pass
                             else:
                                 best_angle = angle
@@ -488,7 +488,7 @@ if uploaded_zip and start_running:
                             final_results[image_file] = None
                     else:
                         special_angle = valid_special_angles[0]
-                        if special_angle != "細節" and special_angle in used_angles:
+                        if special_angle not in ["細節", "情境細節"] and special_angle in used_angles:
                             st.warning(
                                 f"角度 '{special_angle}' 已被使用，圖片 '{image_file}' 無法分配"
                             )
@@ -578,7 +578,7 @@ if uploaded_zip and start_running:
                 candidate = None
                 for candidate_candidate in similarity_list:
                     candidate_angle = candidate_candidate["label"]["angle"]
-                    if candidate_angle == "細節" or candidate_angle not in used_angles:
+                    if candidate_angle in ["細節", "情境細節"] or candidate_angle not in used_angles:
                         candidate = candidate_candidate
                         break
                 else:
@@ -595,7 +595,7 @@ if uploaded_zip and start_running:
             
             assigned_in_this_round = set()
             for angle, images in angle_to_images.items():
-                if angle == "細節":
+                if angle in ["細節", "情境細節"]:
                     # '細節'角度可以重複使用
                     for image_file in images:
                         candidate = image_current_choices[image_file]
@@ -651,7 +651,6 @@ if uploaded_zip and start_running:
             unassigned_images -= assigned_in_this_round
             if not assigned_in_this_round:
                 break
-        # 修改的邏輯結束
 
         for image_file, assignment in final_results.items():
             if assignment is not None:
