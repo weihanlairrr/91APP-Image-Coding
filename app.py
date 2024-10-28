@@ -136,9 +136,9 @@ def get_images_in_folder(folder_path):
     return image_files
 
 def rename_numbers_in_folder(results):
-    folders = set([result["資料夾名稱"] for result in results])
+    folders = set([result["資料夾"] for result in results])
     for folder in folders:
-        folder_results = [r for r in results if r["資料夾名稱"] == folder]
+        folder_results = [r for r in results if r["資料夾"] == folder]
         if any(pd.isna(r["編號"]) or r["編號"] == "" for r in folder_results):
             continue
         folder_results.sort(key=lambda x: int(x["編號"]))
@@ -153,7 +153,7 @@ def rename_numbers_in_folder(results):
 # 重命名並打包資料夾及 Excel 檔案
 def rename_and_zip_folders(results, output_excel_data, skipped_images):
     for result in results:
-        folder_name = result["資料夾名稱"]
+        folder_name = result["資料夾"]
         image_file = result["圖片"]
         new_number = result["編號"]
     
@@ -180,7 +180,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
 
     # 處理跳過的圖片
     for skipped_image in skipped_images:
-        folder_name = skipped_image["資料夾名稱"]
+        folder_name = skipped_image["資料夾"]
         image_file = skipped_image["圖片"]
         folder_path = os.path.join("uploaded_images", folder_name)
         old_image_path = os.path.join(folder_path, image_file)
@@ -330,7 +330,7 @@ if uploaded_zip and start_running:
 
             if any(keyword in image_file for keyword in keywords_to_skip):
                 skipped_images.append({
-                    "資料夾名稱": folder, 
+                    "資料夾": folder, 
                     "圖片": image_file
                 })
                 continue
@@ -342,7 +342,7 @@ if uploaded_zip and start_running:
                     if group_presence[idx]["set_a_present"] and group_presence[idx]["set_b_present"]:
                         # 跳過處理此圖片
                         skipped_images.append({
-                            "資料夾名稱": folder, 
+                            "資料夾": folder, 
                             "圖片": image_file
                         })
                         skip_image = True
@@ -469,9 +469,8 @@ if uploaded_zip and start_running:
                         if best_angle:
                             used_angles.add(best_angle)
                             label_info = {
-                                "資料夾名稱": folder,
+                                "資料夾": folder,
                                 "圖片": image_file,
-                                "品牌": selected_brand,
                                 "商品分類": best_category["category"],
                                 "角度": best_angle,
                                 "編號": angle_to_number[best_angle],
@@ -496,9 +495,8 @@ if uploaded_zip and start_running:
                         else:
                             used_angles.add(special_angle)
                             label_info = {
-                                "資料夾名稱": folder,
+                                "資料夾": folder,
                                 "圖片": image_file,
-                                "品牌": selected_brand,
                                 "商品分類": best_category["category"],
                                 "角度": special_angle,
                                 "編號": angle_to_number[special_angle],
@@ -600,9 +598,8 @@ if uploaded_zip and start_running:
                     for image_file in images:
                         candidate = image_current_choices[image_file]
                         final_results[image_file] = {
-                            "資料夾名稱": candidate["folder"],
+                            "資料夾": candidate["folder"],
                             "圖片": image_file,
-                            "品牌": candidate["label"]["brand"],
                             "商品分類": candidate["label"]["category"],
                             "角度": angle,
                             "編號": candidate["label"]["number"],
@@ -614,9 +611,8 @@ if uploaded_zip and start_running:
                     image_file = images[0]
                     candidate = image_current_choices[image_file]
                     final_results[image_file] = {
-                        "資料夾名稱": candidate["folder"],
+                        "資料夾": candidate["folder"],
                         "圖片": image_file,
-                        "品牌": candidate["label"]["brand"],
                         "商品分類": candidate["label"]["category"],
                         "角度": angle,
                         "編號": candidate["label"]["number"],
@@ -636,9 +632,8 @@ if uploaded_zip and start_running:
                     # 分配角度給相似度最高的圖片
                     candidate = image_current_choices[best_image]
                     final_results[best_image] = {
-                        "資料夾名稱": candidate["folder"],
+                        "資料夾": candidate["folder"],
                         "圖片": best_image,
-                        "品牌": candidate["label"]["brand"],
                         "商品分類": candidate["label"]["category"],
                         "角度": angle,
                         "編號": candidate["label"]["number"],
