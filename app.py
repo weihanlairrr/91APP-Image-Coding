@@ -325,19 +325,28 @@ if uploaded_zip and start_running:
     # 定義特殊的映射關係
     special_mappings = {}
     if selected_brand == "ADS":
-        # 讀取 ADS 品牌的檔名與角度對照表
         df_angles = pd.read_excel("ADS檔名角度對照表.xlsx")
         for idx, row in df_angles.iterrows():
             keyword = str(row['檔名判斷']).strip()
             category = str(row['商品分類']).strip()
-            if category == 'nan' or category == '':
-                category = None
             angle = str(row['對應角度']).strip()
-            angles = [a.strip() for a in angle.split(',')]
-            special_mappings[keyword] = {
-                'category': category, 
-                'angles': angles
-            }
+            angles = [a.strip() for a in angle.split(',') if a.strip()]
+            
+            # 檢查商品分類中是否有括號，並解析主分類及依賴的檔名
+            if '(' in category and category.endswith(')'):
+                main_category = category.split('(')[0].strip()  # 主要商品分類
+                dependent_keyword = category[category.find('(') + 1:category.rfind(')')].strip()  # 依賴檔名關鍵字
+                special_mappings[keyword] = {
+                    'category': main_category, 
+                    'dependent_keyword': dependent_keyword,
+                    'angles': angles
+                }
+            else:
+                special_mappings[keyword] = {
+                    'category': category,
+                    'dependent_keyword': None,
+                    'angles': angles
+                }
 
     # 獲取所有上傳的圖片資料夾
     image_folders = [
@@ -434,8 +443,16 @@ if uploaded_zip and start_running:
             if special_mappings:
                 for substr, mapping in special_mappings.items():
                     if substr in image_file:
-                        special_angles = mapping['angles']
-                        special_category = mapping['category']
+                        # 檢查是否有依賴的檔名關鍵字
+                        dependent_keyword = mapping.get('dependent_keyword')
+                        if dependent_keyword:
+                            # 檢查資料夾中是否有圖片包含依賴的檔名關鍵字
+                            dependent_images = [f for f, _ in image_files if dependent_keyword in f]
+                            if dependent_images:
+                                special_category = mapping['category']
+                        else:
+                            special_category = mapping['category']
+                        special_angles = mapping.get('angles', [])
                         break
 
             # 如果有特殊分類，則設定資料夾的特殊分類
@@ -553,7 +570,7 @@ if uploaded_zip and start_running:
                                 best_angle = angle
                                 best_similarity = similarity
                                 break
-                    
+                        
                         if best_angle:
                             used_angles.add(best_angle)  # 標記角度已使用
                             label_info = {
