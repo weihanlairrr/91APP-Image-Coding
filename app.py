@@ -1,4 +1,3 @@
-# 匯入必要的函式庫
 import streamlit as st
 import pandas as pd
 import zipfile
@@ -12,16 +11,17 @@ import shutil
 import numpy as np
 import platform
 from torchvision.models import ResNet50_Weights
+import re
 
 # 設定 Streamlit 頁面的標題和圖示
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 
-# 自訂 CSS 以調整網頁的樣式
+# 自定義 CSS 以調整頁面樣式
 custom_css = """
 <style>
 .main {
-    padding-left: 28%; 
-    padding-right: 28%;
+    padding-left: 29%; 
+    padding-right: 29%;
 }
 div.block-container{padding-top:4rem;
 }
@@ -58,92 +58,87 @@ button:hover  {
 }
 </style>
 """
-# 將自訂的 CSS 套用到頁面中
+
+# 將自定義 CSS 應用到頁面
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# 設定運行裝置，優先使用 GPU（如果可用）
+# 設定運行裝置，優先使用 GPU（CUDA），否則使用 CPU
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# 載入 ResNet50 模型，並移除最後一層以提取特徵
+# 載入預訓練的 ResNet50 模型，並移除最後一層全連接層
 resnet = models.resnet50(weights=ResNet50_Weights.DEFAULT)
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  
-resnet.eval().to(device)  # 設定模型為評估模式並移至指定裝置
+resnet.eval().to(device)
 
-# 定義圖像預處理步驟
+# 定義圖像預處理流程，包括調整大小、中心裁剪、轉換為張量及正規化
 preprocess = transforms.Compose([
-    transforms.Resize(256),  # 調整圖像大小到 256
-    transforms.CenterCrop(224),  # 中央裁剪到 224x224
-    transforms.ToTensor(),  # 轉換為張量
+    transforms.Resize(256),
+    transforms.CenterCrop(224),
+    transforms.ToTensor(),
     transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],  # 正規化均值
-        std=[0.229, 0.224, 0.225]    # 正規化標準差
+        mean=[0.485, 0.456, 0.406], 
+        std=[0.229, 0.224, 0.225]
     ),
 ])
 
-# 定義需要跳過的關鍵字列表
-keywords_to_skip = ["_SL_", "_SLB_", "_SMC_", "_Fout_", "-1", "_Sid_", "_BL_", "_FM_", "_BSM_", "_LSL_", "Thumbs","_Bex_"]
+# 定義需要跳過的關鍵字列表，這些關鍵字出現在檔名時將跳過處理
+keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_Fout_", "-1", "_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
 
 def get_image_features(image, model):
     """
-    提取圖像的特徵向量。
-    
+    提取圖像特徵的方法。
     參數:
-    image (PIL.Image): 要處理的圖像。
-    model (torch.nn.Module): 用於提取特徵的模型。
-    
-    返回:
-    numpy.ndarray: 圖像的特徵向量。
+        image: PIL.Image 對象，輸入的圖像
+        model: 深度學習模型，用於提取特徵
+    回傳:
+        特徵向量（numpy 陣列）
     """
-    image = preprocess(image).unsqueeze(0).to(device)  # 對圖像進行預處理並添加批次維度
+    image = preprocess(image).unsqueeze(0).to(device)  # 預處理並添加批次維度
     with torch.no_grad():
-        features = model(image).cpu().numpy().flatten()  # 提取特徵並轉換為 NumPy 陣列
+        features = model(image).cpu().numpy().flatten()  # 提取特徵並展平
     return features
 
 def cosine_similarity(a, b):
     """
-    計算兩個向量的餘弦相似度。
-    
+    計算兩個向量之間的餘弦相似度。
     參數:
-    a (numpy.ndarray): 向量 a。
-    b (numpy.ndarray): 向量 b。
-    
-    返回:
-    float: 餘弦相似度。
+        a, b: numpy 陣列，待比較的向量
+    回傳:
+        餘弦相似度值
     """
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 def reset_file_uploader():
     """
-    重設文件上傳器的狀態，並刪除暫存的上傳資料夾和壓縮檔。
+    重置文件上傳器的狀態，並刪除上傳的圖像和臨時壓縮檔。
     """
-    st.session_state['file_uploader_key1'] += 1
+    st.session_state['file_uploader_key1'] += 1  # 增加 key 以重置上傳器
     if os.path.exists("uploaded_images"):
-        shutil.rmtree("uploaded_images")  # 刪除上傳的圖片資料夾
+        shutil.rmtree("uploaded_images")  # 刪除上傳的圖像資料夾
     if os.path.exists("temp.zip"):
-        os.remove("temp.zip")  # 刪除暫存的壓縮檔
+        os.remove("temp.zip")  # 刪除臨時壓縮檔
 
 def unzip_file(uploaded_zip):
     """
-    解壓上傳的 zip 檔案到指定的資料夾。
-    
+    解壓上傳的壓縮檔，並處理解壓過程中的編碼問題。
     參數:
-    uploaded_zip (str): 上傳的 zip 檔案路徑。
+        uploaded_zip: 上傳的壓縮檔案
     """
-    system = platform.system()  # 獲取作業系統類型
+    system = platform.system()  # 獲取作業系統名稱
     
     with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
         for member in zip_ref.infolist():
-            # 跳過 __MACOSX 資料夾和隱藏文件
+            # 跳過系統自動生成的文件
             if "__MACOSX" in member.filename or member.filename.startswith('.'):
                 continue
             
-            # 根據不同作業系統處理檔名編碼
+            # 根據不同的作業系統處理檔名編碼
             if system == "Windows":
                 try:
                     member.filename = member.filename.encode('utf-8').decode('utf-8')
                 except UnicodeDecodeError:
                     member.filename = member.filename.encode('utf-8').decode('latin1')
-            elif system == "Darwin":  # macOS
+            elif system == "Darwin":
                 try:
                     member.filename = member.filename.encode('cp437').decode('utf-8')
                 except UnicodeDecodeError:
@@ -154,26 +149,24 @@ def unzip_file(uploaded_zip):
                 except UnicodeDecodeError:
                     member.filename = member.filename.encode('utf-8').decode('latin1')
             
-            # 解壓檔案到 "uploaded_images" 資料夾
+            # 解壓每個檔案到指定的資料夾
             zip_ref.extract(member, "uploaded_images")
 
 def get_images_in_folder(folder_path):
     """
-    獲取指定資料夾內所有有效的圖片檔案。
-    
+    獲取指定資料夾中的所有圖像檔案。
     參數:
-    folder_path (str): 資料夾路徑。
-    
-    返回:
-    list: 包含圖片相對路徑和完整路徑的元組列表。
+        folder_path: 資料夾的路徑
+    回傳:
+        圖像檔案的相對路徑和完整路徑的列表
     """
     image_files = []
     for root, dirs, files in os.walk(folder_path):
         for file in files:
-            # 跳過以 '.' 開頭的檔案和子資料夾
+            # 跳過隱藏檔案和子目錄
             if file.startswith('.') or os.path.isdir(os.path.join(root, file)):
                 continue
-            # 檢查檔案是否為圖片格式
+            # 檢查檔案副檔名是否為圖像格式
             if file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
                 full_image_path = os.path.join(root, file)
                 relative_image_path = os.path.relpath(full_image_path, folder_path)
@@ -182,40 +175,36 @@ def get_images_in_folder(folder_path):
 
 def rename_numbers_in_folder(results):
     """
-    重新編號資料夾內的圖片，並處理超過上限的情況。
-    
+    根據編號重新命名資料夾中的圖像檔案。
     參數:
-    results (list): 包含圖片處理結果的字典列表。
-    
-    返回:
-    list: 更新後的結果列表。
+        results: 圖像處理的結果列表
+    回傳:
+        更新後的結果列表
     """
     folders = set([result["資料夾"] for result in results])  # 獲取所有資料夾名稱
     for folder in folders:
         folder_results = [r for r in results if r["資料夾"] == folder]
-        # 檢查是否有未編號的圖片
+        # 檢查是否有未編號的圖像
         if any(pd.isna(r["編號"]) or r["編號"] == "" for r in folder_results):
             continue
-        # 按編號排序
+        # 按照編號排序
         folder_results.sort(key=lambda x: int(x["編號"]))
         for idx, result in enumerate(folder_results):
             if idx < 10:
-                result["編號"] = f'{idx+1:02}'  # 重新編號為 01, 02, ...
+                result["編號"] = f'{idx+1:02}'  # 編號格式為兩位數
             else:
-                result["編號"] = "超過上限"  # 超過上限的編號標記
+                result["編號"] = "超過上限"  # 超過編號上限時標記
     return results
 
 def rename_and_zip_folders(results, output_excel_data, skipped_images):
     """
-    重新命名並壓縮資料夾內的圖片，並將結果保存為壓縮檔。
-    
+    重新命名圖像檔案並壓縮處理後的資料夾和結果 Excel 檔。
     參數:
-    results (list): 包含圖片處理結果的字典列表。
-    output_excel_data (bytes): Excel 檔案的二進位資料。
-    skipped_images (list): 被跳過的圖片列表。
-    
-    返回:
-    bytes: 壓縮檔的二進位資料。
+        results: 圖像處理的結果列表
+        output_excel_data: 結果的 Excel 資料
+        skipped_images: 被跳過的圖像列表
+    回傳:
+        壓縮檔的二進位數據
     """
     for result in results:
         folder_name = result["資料夾"]
@@ -225,22 +214,21 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         folder_path = os.path.join("uploaded_images", folder_name)
         main_folder_path = os.path.join(folder_path, "1-Main")
         all_folder_path = os.path.join(main_folder_path, "All")
-        os.makedirs(all_folder_path, exist_ok=True)  # 創建主資料夾和 All 子資料夾
+        os.makedirs(all_folder_path, exist_ok=True)  # 創建主資料夾和 All 資料夾
         
         old_image_path = os.path.join(folder_path, image_file)
 
         if new_number == "超過上限" or pd.isna(new_number):
-            new_image_path = os.path.join(folder_path, image_file)  # 保持原名
+            new_image_path = os.path.join(folder_path, image_file)  # 不重新命名
         else:
-            new_image_name = f"{folder_name}_{new_number}.jpg"  # 新的圖片名稱
+            new_image_name = f"{folder_name}_{new_number}.jpg"  # 新的圖像名稱
             new_image_path = os.path.join(all_folder_path, new_image_name)
-
+        
         os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
 
         if os.path.exists(old_image_path):
-            os.rename(old_image_path, new_image_path)  # 重新命名圖片
+            os.rename(old_image_path, new_image_path)  # 重新命名圖像檔案
 
-    # 處理被跳過的圖片
     for skipped_image in skipped_images:
         folder_name = skipped_image["資料夾"]
         image_file = skipped_image["圖片"]
@@ -249,120 +237,119 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         
         if os.path.exists(old_image_path):
             new_image_path = os.path.join(folder_path, image_file)
-            os.rename(old_image_path, new_image_path)
+            os.rename(old_image_path, new_image_path)  # 保持原名稱
 
-    # 創建壓縮檔
-    zip_buffer = BytesIO()
+    zip_buffer = BytesIO()  # 創建內存中的緩衝區
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
         for folder in os.listdir("uploaded_images"):
             folder_path = os.path.join("uploaded_images", folder)
             if os.path.isdir(folder_path):
-                new_folder_name = f"{folder}_OK"
+                new_folder_name = f"{folder}_OK"  # 新的資料夾名稱
                 new_folder_path = os.path.join("uploaded_images", new_folder_name)
                 os.rename(folder_path, new_folder_path)  # 重新命名資料夾
                 
                 for root, dirs, files in os.walk(new_folder_path):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        # 將檔案添加到壓縮檔中，保持相對路徑
-                        zipf.write(file_path, os.path.relpath(file_path, "uploaded_images"))
+                        zipf.write(file_path, os.path.relpath(file_path, "uploaded_images"))  # 添加檔案到壓縮檔
         
-        # 將 Excel 結果添加到壓縮檔
-        zipf.writestr("編圖結果.xlsx", output_excel_data)
+        zipf.writestr("編圖結果.xlsx", output_excel_data)  # 添加結果 Excel 檔到壓縮檔
 
-    return zip_buffer.getvalue()  # 返回壓縮檔的二進位資料
+    return zip_buffer.getvalue()  # 返回壓縮檔的二進位數據
 
-# 載入已預先計算的圖像特徵資料
+# 從 pickle 檔案中載入圖像特徵數據，並保存原始資料以供後續重置
 with open('image_features.pkl', 'rb') as f:
     features_by_category = pickle.load(f)
+    original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
 
-# 初始化文件上傳器的狀態
+# 初始化 session_state 中的文件上傳器 key
 if 'file_uploader_key1' not in st.session_state:
     st.session_state['file_uploader_key1'] = 0
 
-# 設定頁面的標題
+# 設定頁面標題
 st.header("TP 編圖工具")
 st.write("\n")
 
-# 文件上傳器，允許使用者上傳 zip 檔案
+# 創建文件上傳器，允許上傳 zip 檔案
 uploaded_zip = st.file_uploader(
     "上傳 zip 檔案", 
     type=["zip"], 
     key='file_uploader_' + str(st.session_state['file_uploader_key1'])
 )
 
-# 建立佔位符，用於後續動態添加選項框和按鈕
+# 創建佔位符以動態顯示選擇框和按鈕
 selectbox_placeholder = st.empty()
 button_placeholder = st.empty()
 
-# 如果有上傳檔案，顯示品牌選擇框和開始按鈕
 if uploaded_zip:
     with selectbox_placeholder:
         selected_brand = st.selectbox(
             "請選擇品牌", 
-            list(features_by_category.keys())  # 品牌列表來源於已載入的特徵資料
+            list(features_by_category.keys())  # 從載入的特徵數據中獲取品牌列表
         )
     with button_placeholder:
-        start_running = st.button("開始執行")
+        start_running = st.button("開始執行")  # 開始執行按鈕
 
-# 如果檔案已上傳且使用者按下開始執行按鈕
 if uploaded_zip and start_running:
-    selectbox_placeholder.empty()  # 清空品牌選擇框
-    button_placeholder.empty()      # 清空按鈕
+    # 清空選擇框和按鈕的佔位符
+    selectbox_placeholder.empty()
+    button_placeholder.empty()
     st.write("\n")
     
-    # 如果存在之前上傳的圖片資料夾，刪除它
+    # 如果已存在上傳的圖像資料夾，則刪除
     if os.path.exists("uploaded_images"):
         shutil.rmtree("uploaded_images")
         
-    # 將上傳的 zip 檔案寫入暫存檔案
+    # 將上傳的 zip 檔案寫入臨時檔案
     with open("temp.zip", "wb") as f:
         f.write(uploaded_zip.getbuffer())
 
     # 解壓上傳的 zip 檔案
     unzip_file("temp.zip")
 
-    # 定義特殊的映射關係
+    # 初始化特殊映射字典
     special_mappings = {}
     if selected_brand == "ADS":
+        # 讀取特定品牌的檔名角度對照表
         df_angles = pd.read_excel("ADS檔名角度對照表.xlsx")
         for idx, row in df_angles.iterrows():
             keyword = str(row['檔名判斷']).strip()
-            category = str(row['商品分類']).strip()
-            angle = str(row['對應角度']).strip()
-            angles = [a.strip() for a in angle.split(',') if a.strip()]
-            
-            # 檢查商品分類中是否有括號，並解析主分類及依賴的檔名
-            if '(' in category and category.endswith(')'):
-                main_category = category.split('(')[0].strip()  # 主要商品分類
-                dependent_keyword = category[category.find('(') + 1:category.rfind(')')].strip()  # 依賴檔名關鍵字
-                special_mappings[keyword] = {
-                    'category': main_category, 
-                    'dependent_keyword': dependent_keyword,
-                    'angles': angles
-                }
+            category_raw = str(row['商品分類']).strip()
+            if category_raw == 'nan' or category_raw == '':
+                category = None
+                category_filename = None
             else:
-                special_mappings[keyword] = {
-                    'category': category,
-                    'dependent_keyword': None,
-                    'angles': angles
-                }
+                # 使用正則表達式解析商品分類
+                match = re.match(r'^(.*)\((.*)\)$', category_raw)
+                if match:
+                    category = match.group(1).strip()
+                    category_filename = match.group(2).strip()
+                else:
+                    category = category_raw
+                    category_filename = None
+            angle = str(row['對應角度']).strip()
+            angles = [a.strip() for a in angle.split(',')]
+            special_mappings[keyword] = {
+                'category': category, 
+                'category_filename': category_filename,
+                'angles': angles
+            }
 
-    # 獲取所有上傳的圖片資料夾
+    # 獲取所有上傳的圖像資料夾
     image_folders = [
         f for f in os.listdir("uploaded_images") 
         if os.path.isdir(os.path.join("uploaded_images", f)) 
         and not f.startswith('__MACOSX') and not f.startswith('.')
     ]
-    results = []        # 儲存處理結果
-    skipped_images = [] # 儲存被跳過的圖片
-    progress_bar = st.progress(0)  # 建立進度條
-    progress_text = st.empty()      # 建立進度文字
+    results = []  # 存儲處理結果
+    skipped_images = []  # 存儲被跳過的圖像
+    progress_bar = st.progress(0)  # 創建進度條
+    progress_text = st.empty()  # 創建進度文字
 
-    total_folders = len(image_folders)  # 總共需要處理的資料夾數
-    processed_folders = 0               # 已處理的資料夾數
+    total_folders = len(image_folders)  # 總資料夾數量
+    processed_folders = 0  # 已處理的資料夾數量
 
-    # 定義分組條件，用於判斷圖片的類型
+    # set_b 只有在 set_a 不存在時才能使用，否則需要被移到外層資料夾
     group_conditions = [
         {
             "set_a": ['_D1_', '_D2_', '_D3_', '_D4_', '_D5_'],
@@ -378,19 +365,24 @@ if uploaded_zip and start_running:
         }
     ]
 
-    # 逐一處理每個圖片資料夾
+    # 遍歷每個圖像資料夾進行處理
     for folder in image_folders:
+        # 每次處理新資料夾前，重置 features_by_category
+        features_by_category = {k: v.copy() for k, v in original_features_by_category.items()}
+
         folder_path = os.path.join("uploaded_images", folder)
-        image_files = get_images_in_folder(folder_path)  # 獲取資料夾內的所有圖片
+        image_files = get_images_in_folder(folder_path)  # 獲取資料夾中的圖像檔案
         if not image_files:
             st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
-            continue  # 跳過沒有圖片的資料夾
-        folder_features = []  # 儲存資料夾內所有圖片的特徵
-        progress_text.text(f"正在處理資料夾: {folder}")  # 更新進度文字
-        special_images = []  # 儲存特殊角度的圖片
-        folder_special_category = None  # 資料夾的特殊商品分類
+            continue
+        folder_features = []  # 存儲資料夾中所有圖像的特徵
 
-        # 初始化分組存在情況的列表
+        progress_text.text(f"正在處理資料夾: {folder}")  # 更新進度文字
+
+        special_images = []  # 存儲特殊映射的圖像
+        folder_special_category = None  # 存儲資料夾的特殊分類
+
+        # 初始化每組條件的存在標記
         group_presence = []
         for group in group_conditions:
             group_presence.append({
@@ -398,7 +390,7 @@ if uploaded_zip and start_running:
                 "set_b_present": False
             })
 
-        # 檢查每個資料夾中各分組條件是否存在
+        # 檢查每個分組條件是否在資料夾中存在
         for image_file, image_path in image_files:
             if image_file.startswith('.') or os.path.isdir(image_path):
                 continue
@@ -409,12 +401,14 @@ if uploaded_zip and start_running:
                 if any(substr in image_file for substr in group["set_b"]):
                     group_presence[idx]["set_b_present"] = True
 
-        # 逐一處理每張圖片
+        image_filenames = [img[0] for img in image_files]  # 獲取所有圖像檔案名稱
+
+        # 遍歷每個圖像檔案進行特徵提取和分類
         for image_file, image_path in image_files:
             if image_file.startswith('.') or os.path.isdir(image_path):
                 continue
 
-            # 如果圖片名稱包含需要跳過的關鍵字，則加入跳過列表
+            # 檢查圖像檔名是否包含需要跳過的關鍵字
             if any(keyword in image_file for keyword in keywords_to_skip):
                 skipped_images.append({
                     "資料夾": folder, 
@@ -423,7 +417,7 @@ if uploaded_zip and start_running:
                 continue
 
             skip_image = False
-            # 根據分組條件判斷是否需要跳過圖片
+            # 根據分組條件決定是否跳過圖像
             for idx, group in enumerate(group_conditions):
                 if any(substr in image_file for substr in group["set_b"]):
                     if group_presence[idx]["set_a_present"] and group_presence[idx]["set_b_present"]:
@@ -439,29 +433,25 @@ if uploaded_zip and start_running:
 
             special_angles = []
             special_category = None
-            # 根據特殊映射關係判斷圖片的特殊角度和分類
+            category_filename = None
+            # 檢查是否有特殊映射
             if special_mappings:
                 for substr, mapping in special_mappings.items():
                     if substr in image_file:
-                        # 檢查是否有依賴的檔名關鍵字
-                        dependent_keyword = mapping.get('dependent_keyword')
-                        if dependent_keyword:
-                            # 檢查資料夾中是否有圖片包含依賴的檔名關鍵字
-                            dependent_images = [f for f, _ in image_files if dependent_keyword in f]
-                            if dependent_images:
-                                special_category = mapping['category']
-                        else:
-                            special_category = mapping['category']
-                        special_angles = mapping.get('angles', [])
+                        special_angles = mapping['angles']
+                        special_category = mapping['category']
+                        category_filename = mapping.get('category_filename')
+                        if category_filename:
+                            if any(category_filename in fname for fname in image_filenames):
+                                pass 
+                            else:
+                                special_category = None 
+                        if special_category and not folder_special_category:
+                            folder_special_category = special_category
                         break
 
-            # 如果有特殊分類，則設定資料夾的特殊分類
-            if special_category and not folder_special_category:
-                folder_special_category = special_category
-
-            # 開啟圖片並提取特徵
-            img = Image.open(image_path).convert('RGB')
-            img_features = get_image_features(img, resnet)
+            img = Image.open(image_path).convert('RGB')  # 打開並轉換圖像為 RGB 模式
+            img_features = get_image_features(img, resnet)  # 提取圖像特徵
             folder_features.append({
                 "image_file": image_file,
                 "features": img_features,
@@ -469,69 +459,112 @@ if uploaded_zip and start_running:
                 "special_category": special_category
             })
 
-            # 如果有特殊角度，則記錄該圖片
             if special_angles:
                 special_images.append({
                     "image_file": image_file,
                     "special_angles": special_angles
                 })
 
-        best_category = None  # 最佳匹配的商品分類
+        best_category = None  # 初始化最佳分類
 
-        # 如果資料夾內沒有有效的圖片，跳過該資料夾
         if len(folder_features) == 0:
             st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
             continue
 
-        # 如果有特殊分類，則直接使用特殊分類
+        # 處理特殊的外套類型
+        suit_keywords = ["_Ftp_", "_Btp_", "_Fbp_", "_Bbp_"]
+        reversible_jacket_keywords = ["_Fin_Model_", "_Fin_Torso_"]
+        three_in_one_jacket_keywords = ["_Fex_Model_", "_Fin_eCom"]
+        
+        if "套裝" in features_by_category[selected_brand]:
+            suit_folder = any(
+                any(keyword in image_file for keyword in suit_keywords)
+                for image_file, image_path in image_files
+            )
+            if not suit_folder:
+                features_by_category[selected_brand].pop("套裝", None)
+
+        if "雙面外套" in features_by_category[selected_brand]:
+            reversible_jacket_folder = any(
+                any(keyword in image_file for keyword in reversible_jacket_keywords)
+                for image_file, image_path in image_files
+            )
+            if not reversible_jacket_folder:
+                # 如果資料夾中沒有雙面外套的關鍵字，則移除該分類
+                features_by_category[selected_brand].pop("雙面外套", None)
+
+        if "三合一外套" in features_by_category[selected_brand]:
+            three_in_one_jacket_folder = (
+                any("_Fex_Model_" in image_file for image_file, image_path in image_files) and 
+                any("_Fin_eCom" in image_file for image_file, image_path in image_files)
+            )
+            if not three_in_one_jacket_folder:
+                # 如果資料夾中沒有三合一外套的關鍵字，則移除該分類
+                features_by_category[selected_brand].pop("三合一外套", None)
+
+        # 如果有特殊分類，則設定為最佳分類
         if folder_special_category:
             best_category = {
                 'brand': selected_brand, 
                 'category': folder_special_category
             }
         else:
-            # 否則，根據相似度選擇最佳分類
-            best_similarity = -1
+            # 計算每個分類的相似度，選擇相似度最高的分類
+            category_similarities = {}
             for img_data in folder_features:
                 img_features = img_data["features"]
-
+        
                 for brand in features_by_category:
                     for category in features_by_category[brand]:
+                        total_similarity = 0
+                        num_items = 0
                         for item in features_by_category[brand][category]["labeled_features"]:
                             item_features = item["features"]
-                            similarity = cosine_similarity(
-                                img_features, item_features
-                            )
+                            similarity = cosine_similarity(img_features, item_features)
+                            total_similarity += similarity
+                            num_items += 1
+        
+                        avg_similarity = total_similarity / num_items if num_items > 0 else 0
+                        if category not in category_similarities:
+                            category_similarities[category] = []
+                        category_similarities[category].append(avg_similarity)
+        
+            # 計算每個分類的平均相似度並選擇最高的分類
+            best_category = None
+            highest_avg_similarity = -1
+            for category, similarities in category_similarities.items():
+                folder_avg_similarity = sum(similarities) / len(similarities)
+                if folder_avg_similarity > highest_avg_similarity:
+                    highest_avg_similarity = folder_avg_similarity
+                    best_category = {
+                        'brand': selected_brand, 
+                        'category': category
+                    }
 
-                            if similarity > best_similarity:
-                                best_similarity = similarity
-                                best_category = item["labels"]
-
-        # 根據最佳分類過濾對應的特徵
+        # 根據最佳分類獲取相關的標籤和編號
         filtered_by_category = features_by_category[selected_brand][
             best_category["category"]
         ]["labeled_features"]
 
-        # 建立角度到編號的對應字典
         angle_to_number = {
             item["labels"]["angle"]: item["labels"]["number"] 
             for item in filtered_by_category
         }
 
         used_angles = set()  # 已使用的角度集合
-        final_results = {}    # 最終的分配結果
-        assigned_special_D_angle = False  # 是否已分配特殊的 D 角度
+        final_results = {}  # 最終結果字典
 
-        # 逐一處理資料夾內的圖片
+        assigned_special_D_angle = False  # 是否分配了特殊的 D 角度
+
+        # 遍歷每個圖像資料進行角度分配
         for img_data in folder_features:
             image_file = img_data["image_file"]
             special_angles = img_data["special_angles"]
             special_category = img_data["special_category"]
             img_features = img_data["features"]
 
-            # 如果圖片有特殊角度
             if special_angles:
-                # 過濾出有效的特殊角度
+                # 過濾有效的特殊角度
                 valid_special_angles = [
                     angle for angle in special_angles 
                     if angle in angle_to_number
@@ -541,7 +574,7 @@ if uploaded_zip and start_running:
                         best_angle = None
                         valid_angles_by_similarity = []
                         
-                        # 根據相似度排序有效的角度
+                        # 根據相似度選擇最佳角度
                         for angle in valid_special_angles:
                             max_similarity = -1
                             for item in filtered_by_category:
@@ -557,12 +590,11 @@ if uploaded_zip and start_running:
                                 (angle, max_similarity)
                             )
                         
-                        # 按相似度降序排序角度
+                        # 根據相似度排序
                         valid_angles_by_similarity.sort(
                             key=lambda x: x[1], reverse=True
                         )
                         
-                        # 選擇最佳角度，避免重複使用特定角度
                         for angle, similarity in valid_angles_by_similarity:
                             if angle not in ["細節", "情境細節","情境帽子配戴照"] and angle in used_angles:
                                 pass
@@ -570,16 +602,16 @@ if uploaded_zip and start_running:
                                 best_angle = angle
                                 best_similarity = similarity
                                 break
-                        
+                    
                         if best_angle:
-                            used_angles.add(best_angle)  # 標記角度已使用
+                            used_angles.add(best_angle)  # 標記角度為已使用
                             label_info = {
                                 "資料夾": folder,
                                 "圖片": image_file,
                                 "商品分類": best_category["category"],
                                 "角度": best_angle,
                                 "編號": angle_to_number[best_angle],
-                                "預測信心": f"{best_similarity * 100:.2f}%"
+                                "最大相似度": f"{best_similarity * 100:.2f}%"
                             }
                             final_results[image_file] = label_info
                             if best_angle in ["D1", "D2", "D3", "D4", "D5",'_H1_', '_H2_', '_H3_','_H4_','_H5_']:
@@ -590,7 +622,7 @@ if uploaded_zip and start_running:
                             )
                             final_results[image_file] = None
                     else:
-                        # 僅有一個特殊角度的情況
+                        # 只有一個有效的特殊角度
                         special_angle = valid_special_angles[0]
                         if special_angle not in ["細節", "情境細節","情境帽子配戴照"] and special_angle in used_angles:
                             st.warning(
@@ -598,51 +630,49 @@ if uploaded_zip and start_running:
                             )
                             final_results[image_file] = None
                         else:
-                            used_angles.add(special_angle)
+                            used_angles.add(special_angle)  # 標記角度為已使用
                             label_info = {
                                 "資料夾": folder,
                                 "圖片": image_file,
                                 "商品分類": best_category["category"],
                                 "角度": special_angle,
                                 "編號": angle_to_number[special_angle],
-                                "預測信心": "100.00%"
+                                "最大相似度": "100.00%"
                             }
                             final_results[image_file] = label_info
                             if special_angle in ["D1", "D2", "D3", "D4", "D5",'_H1_', '_H2_', '_H3_','_H4_','_H5_']:
                                 assigned_special_D_angle = True
                 else:
-                    # 如果特殊角度無效，顯示警告
                     st.warning(
                         f"商品分類 '{best_category['category']}' 中沒有角度 '{', '.join(special_angles)}'，圖片 '{image_file}' 無法分配"
                     )
                     final_results[image_file] = None
             else:
-                final_results[image_file] = None  # 沒有特殊角度的圖片暫時不處理
+                final_results[image_file] = None  # 非特殊圖像暫時不分配
 
-        # 獲取所有非特殊角度的圖片
+        # 獲取所有非特殊的圖像
         non_special_images = [
             img_data for img_data in folder_features 
             if not img_data["special_angles"]
         ]
 
-        # 如果沒有特殊映射，所有圖片都視為非特殊角度
         if not special_mappings:
-            non_special_images = folder_features
+            non_special_images = folder_features  # 如果沒有特殊映射，所有圖像都是非特殊的
 
-        image_similarity_store = {}  # 儲存圖片的相似度列表
+        image_similarity_store = {}
 
-        # 逐一計算非特殊圖片的相似度
+        # 計算非特殊圖像與標籤的相似度
         for img_data in non_special_images:
             image_file = img_data["image_file"]
             if final_results.get(image_file) is not None:
-                continue  # 已經有分配結果的圖片跳過
+                continue
 
             img_features = img_data["features"]
             image_similarity_list = []
             for item in filtered_by_category:
                 item_angle = item["labels"]["angle"]
                 if assigned_special_D_angle and item_angle == "細節":
-                    continue  # 如果已分配特殊 D 角度，跳過細節角度
+                    continue
                 item_features = item["features"]
                 similarity = cosine_similarity(
                     img_features, item_features
@@ -655,12 +685,11 @@ if uploaded_zip and start_running:
                     "folder": folder
                 })
 
-            # 按相似度降序排序
+            # 根據相似度排序
             image_similarity_list.sort(
                 key=lambda x: x["similarity"], reverse=True
             )
             unique_labels = []
-            # 選取前 10 個不重複的角度標籤
             for candidate in image_similarity_list:
                 if candidate["label"]["angle"] not in [
                     label["label"]["angle"] for label in unique_labels
@@ -671,9 +700,9 @@ if uploaded_zip and start_running:
 
             image_similarity_store[image_file] = unique_labels
 
-        unassigned_images = set(image_similarity_store.keys())  # 尚未分配的圖片集合
+        unassigned_images = set(image_similarity_store.keys())  # 未分配的圖像集合
 
-        # 持續分配直到所有圖片都被處理或無法進一步分配
+        # 進行角度分配，直到所有未分配的圖像都處理完
         while unassigned_images:
             angle_to_images = {}
             image_current_choices = {}
@@ -708,11 +737,10 @@ if uploaded_zip and start_running:
                             "商品分類": candidate["label"]["category"],
                             "角度": angle,
                             "編號": candidate["label"]["number"],
-                            "預測信心": f"{candidate['similarity'] * 100:.2f}%"
+                            "最大相似度": f"{candidate['similarity'] * 100:.2f}%"
                         }
                         assigned_in_this_round.add(image_file)
                 elif len(images) == 1:
-                    # 只有一張圖片符合此角度
                     image_file = images[0]
                     candidate = image_current_choices[image_file]
                     final_results[image_file] = {
@@ -721,12 +749,11 @@ if uploaded_zip and start_running:
                         "商品分類": candidate["label"]["category"],
                         "角度": angle,
                         "編號": candidate["label"]["number"],
-                        "預測信心": f"{candidate['similarity'] * 100:.2f}%"
+                        "最大相似度": f"{candidate['similarity'] * 100:.2f}%"
                     }
-                    used_angles.add(angle)  # 標記角度已使用
+                    used_angles.add(angle)  # 標記角度為已使用
                     assigned_in_this_round.add(image_file)
                 else:
-                    # 多張圖片符合此角度，選擇相似度最高的一張
                     max_similarity = -1
                     best_image = None
                     for image_file in images:
@@ -741,16 +768,16 @@ if uploaded_zip and start_running:
                         "商品分類": candidate["label"]["category"],
                         "角度": angle,
                         "編號": candidate["label"]["number"],
-                        "預測信心": f"{candidate['similarity'] * 100:.2f}%"
+                        "最大相似度": f"{candidate['similarity'] * 100:.2f}%"
                     }
-                    used_angles.add(angle)  # 標記角度已使用
+                    used_angles.add(angle)  # 標記角度為已使用
                     assigned_in_this_round.add(best_image)
 
-            unassigned_images -= assigned_in_this_round  # 移除已分配的圖片
+            unassigned_images -= assigned_in_this_round  # 更新未分配的圖像
             if not assigned_in_this_round:
-                break  # 如果本輪沒有分配，則結束迴圈
+                break  # 如果沒有圖像在本輪被分配，則退出循環
 
-        # 將最終分配結果加入結果列表
+        # 將最終分配結果添加到結果列表
         for image_file, assignment in final_results.items():
             if assignment is not None:
                 results.append(assignment)
@@ -762,32 +789,32 @@ if uploaded_zip and start_running:
     progress_bar.empty()
     progress_text.empty()
 
-    # 重新編號資料夾內的圖片
+    # 根據編號重新命名圖像
     results = rename_numbers_in_folder(results)
 
-    # 將結果轉換為 DataFrame 並顯示在網頁上
+    # 將結果轉換為 DataFrame 並顯示在頁面上
     result_df = pd.DataFrame(results)
     st.dataframe(result_df, hide_index=True, use_container_width=True)
 
-    # 將結果保存為 Excel 檔案
+    # 將結果 DataFrame 寫入 Excel 檔案
     excel_buffer = BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
         result_df.to_excel(writer, index=False)
     excel_data = excel_buffer.getvalue()
 
-    # 重新命名並壓縮資料夾，包含 Excel 結果和跳過的圖片
+    # 重新命名並壓縮資料夾和結果 Excel 檔案
     zip_data = rename_and_zip_folders(results, excel_data, skipped_images)
     
-    # 清理暫存資料夾和檔案
+    # 刪除上傳的圖像資料夾和臨時壓縮檔
     shutil.rmtree("uploaded_images")
     os.remove("temp.zip") 
     
-    # 提供下載按鈕讓使用者下載結果壓縮檔
+    # 提供下載按鈕，下載處理後的壓縮檔
     if st.download_button(
         label="下載編圖結果",
         data=zip_data,
         file_name="編圖結果.zip",
         mime="application/zip",
-        on_click=reset_file_uploader  # 下載後重設上傳器
+        on_click=reset_file_uploader
     ):
-        st.rerun()  # 重新執行頁面以清除狀態
+        st.rerun()  # 下載後重新運行應用以重置狀態
