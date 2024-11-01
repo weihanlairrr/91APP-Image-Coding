@@ -87,6 +87,9 @@ preprocess = transforms.Compose([
 # 資料集檔名
 train_file = "image_features.pkl"
 
+# 檔名角度對照表
+angle_filename_reference = "ADS檔名角度對照表.xlsx"
+
 # 編圖的編號上限
 label_limit = 10
 
@@ -375,7 +378,7 @@ if uploaded_zip and start_running:
     special_mappings = {}
     if selected_brand == "ADS":
         # 讀取特定品牌的檔名角度對照表
-        df_angles = pd.read_excel("ADS檔名角度對照表.xlsx")
+        df_angles = pd.read_excel(angle_filename_reference)
         for idx, row in df_angles.iterrows():
             keyword = str(row['檔名判斷']).strip()
             category_raw = str(row['商品分類']).strip()
