@@ -21,8 +21,8 @@ st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 custom_css = """
 <style>
 .main {
-    padding-left: 29%; 
-    padding-right: 29%;
+    padding-left: 28%; 
+    padding-right: 28%;
 }
 div.block-container{padding-top:4rem;
 }
