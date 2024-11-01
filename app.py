@@ -84,52 +84,49 @@ preprocess = transforms.Compose([
 
 #%% 使用者輸入區
 
+# 資料集檔名
 train_file = "image_features.pkl"
 
 # 編圖的編號上限
 label_limit = 10
 
-# 定義需要跳過的關鍵字列表，這些關鍵字出現在檔名時將跳過處理
-keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_Fout_", "-1", "_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
+# 讀取 Excel 檔案
+file_path = '角度分配條件.xlsx'
 
-# set_b 只有在 set_a 不存在時才能使用，否則需要被移到外層資料夾
-substitute = [
-    {
-    "set_a": ['_D1_', '_D2_', '_D3_', '_D4_', '_D5_'],
-    "set_b": ['_H1_', '_H2_', '_H3_','_H4_','_H5_']
-    },
-    {
-    "set_a": ['_SC_'],
-    "set_b": ['_Sid_Torso_']
-    },
-    {
-    "set_a": ['_W_Model_'],
-    "set_b": ['_Sid_Model_']
-    }
-]
+# 讀取「移到外層的檔名」的第一欄作為關鍵字列表，並確保所有元素為字串
+keywords_to_skip = pd.read_excel(file_path, sheet_name='移到外層的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
 
-# 可以被重複分配的角度
-reassigned_allowed = ["細節", "情境細節","情境帽子配戴照"]
+# 讀取「有條件使用的檔名」，拆分 set_a 和 set_b 的逗號分隔值
+substitute_df = pd.read_excel(file_path, sheet_name='有條件使用的檔名', usecols=[0, 1])
+substitute = []
+for _, row in substitute_df.iterrows():
+    substitute.append({
+        "set_a": row.iloc[0].split(','),  # 將 set_a 列表中的值以逗號分隔
+        "set_b": row.iloc[1].split(',')   # 將 set_b 列表中的值以逗號分隔
+    })
 
-# 定義角度禁止規則，根據角度名稱出現與否來禁止特定角度
+# 讀取「可以重複分配的角度」的第一欄作為可重複分配的角度列表
+reassigned_allowed = pd.read_excel(file_path, sheet_name='可以重複分配的角度', usecols=[0]).iloc[:, 0].dropna().tolist()
+
+# 讀取「角度禁止規則」的前3欄並組裝成結構化字典
+angle_banning_df = pd.read_excel(file_path, sheet_name='角度禁止規則', usecols=[0, 1, 2])
 angle_banning_rules = [
     {
-    "if_appears_in_angle": ["D1", "D2", "D3", "D4", "D5"],
-    "banned_angle": "細節",
-    "banned_angle_logic": "等於"  # "等於" 或 "包含"
-    },
-    {
-    "if_appears_in_angle": ["HM1", "HM2", "HM3", "HM4", "HM5", "HM6", "HM7", "HM8", "HM9", "HM10"],
-    "banned_angle": "情境",
-    "banned_angle_logic": "包含"  # "等於" 或 "包含"
+        "if_appears_in_angle": row.iloc[0].split(','),  # 將條件角度分隔為列表
+        "banned_angle": row.iloc[1],
+        "banned_angle_logic": row.iloc[2]
     }
+    for _, row in angle_banning_df.iterrows()
 ]
 
-# 定義商品分類與其必須包含的檔名列表
-category_keywords_rules = {
-    "套裝": ["_Ftp_", "_Btp_", "_Fbp_", "_Bbp_"],
-    "雙面外套": ["_Fin_Model_", "_Fin_Torso_"],
-    "三合一外套": ["_Fex_Model_", "_Fin_eCom"]
+# 讀取「商品分類及關鍵字條件」的前3欄並組裝成字典
+category_rules_df = pd.read_excel(file_path, sheet_name='商品分類及關鍵字條件', usecols=[0, 1, 2])
+category_rules = {
+    row.iloc[0]: {
+        "keywords": row.iloc[1].split(','),
+        "match_all": row.iloc[2]
+    }
+    for _, row in category_rules_df.iterrows()
 }
 
 #%% function
@@ -264,11 +261,11 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         main_folder_path = os.path.join(folder_path, "1-Main")
         all_folder_path = os.path.join(main_folder_path, "All")
         os.makedirs(all_folder_path, exist_ok=True)  # 創建主資料夾和 All 資料夾
-        
+            
         old_image_path = os.path.join(folder_path, image_file)
 
         if new_number == "超過上限" or pd.isna(new_number):
-            new_image_path = os.path.join(folder_path, image_file)  # 不重新命名
+            new_image_path = os.path.join(folder_path, os.path.basename(image_file))  # 將圖片移動到外層資料夾
         else:
             new_image_name = f"{folder_name}_{new_number}.jpg"  # 新的圖像名稱
             new_image_path = os.path.join(all_folder_path, new_image_name)
@@ -276,7 +273,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
 
         if os.path.exists(old_image_path):
-            os.rename(old_image_path, new_image_path)  # 重新命名圖像檔案
+            os.rename(old_image_path, new_image_path)  # 重新命名或移動圖像檔案
 
     for skipped_image in skipped_images:
         folder_name = skipped_image["資料夾"]
@@ -285,8 +282,9 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         old_image_path = os.path.join(folder_path, image_file)
         
         if os.path.exists(old_image_path):
-            new_image_path = os.path.join(folder_path, image_file)
-            os.rename(old_image_path, new_image_path)  # 保持原名稱
+            new_image_path = os.path.join(folder_path, os.path.basename(image_file))  # 將圖片移動到外層資料夾
+            os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+            os.rename(old_image_path, new_image_path)  # 移動圖片
 
     zip_buffer = BytesIO()  # 創建內存中的緩衝區
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
@@ -306,6 +304,21 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
 
     return zip_buffer.getvalue()  # 返回壓縮檔的二進位數據
 
+def category_match(image_files, keywords, match_all):
+    """
+    根據給定的條件判斷資料夾是否符合特定商品分類。
+    參數:
+        image_files: 資料夾中所有圖像檔案名稱
+        keywords: 判斷所需的關鍵字列表
+        match_all: 布林值，指示是否需要所有關鍵字都存在 (True) 還是只需任一關鍵字存在 (False)
+    回傳:
+        布林值，指示資料夾是否符合該商品分類
+    """
+    if match_all:
+        return all(any(keyword in image_file for image_file in image_files) for keyword in keywords)
+    else:
+        return any(any(keyword in image_file for image_file in image_files) for keyword in keywords)
+    
 #%% 主函數
 
 # 從 pickle 檔案中載入圖像特徵數據，並保存原始資料以供後續重置
@@ -510,13 +523,9 @@ if uploaded_zip and start_running:
             continue
 
         # 資料夾必須含有以下檔名，才能夠被分配到指定的商品分類
-        for category, keywords in category_keywords_rules.items():
+        for category, rule in category_rules.items():
             if category in features_by_category[selected_brand]:
-                category_folder = any(
-                    any(keyword in image_file for keyword in keywords)
-                    for image_file, image_path in image_files
-                )
-                if not category_folder:
+                if not category_match([file[0] for file in image_files], rule["keywords"], rule["match_all"]):
                     features_by_category[selected_brand].pop(category, None)
 
         # 如果有特殊分類，則設定為最佳分類
@@ -530,22 +539,26 @@ if uploaded_zip and start_running:
             category_similarities = {}
             for img_data in folder_features:
                 img_features = img_data["features"]
-        
+            
                 for brand in features_by_category:
                     for category in features_by_category[brand]:
-                        total_similarity = 0
-                        num_items = 0
+                        image_similarities = []
+                        
+                        # 計算該圖像與分類中每個標籤特徵的相似度
                         for item in features_by_category[brand][category]["labeled_features"]:
                             item_features = item["features"]
                             similarity = cosine_similarity(img_features, item_features)
-                            total_similarity += similarity
-                            num_items += 1
-
-                        avg_similarity = total_similarity / num_items if num_items > 0 else 0
+                            image_similarities.append(similarity)
+                        
+                        # 將相似度排序，取前3個最高的相似度（如果圖片不足3張則取全部）
+                        top_similarities = sorted(image_similarities, reverse=True)[:3]
+                        avg_top_similarity = sum(top_similarities) / len(top_similarities)
+                        
+                        # 儲存分類的平均相似度
                         if category not in category_similarities:
                             category_similarities[category] = []
-                        category_similarities[category].append(avg_similarity)
-
+                        category_similarities[category].append(avg_top_similarity)
+            
             # 計算每個分類的平均相似度並選擇最高的分類
             best_category = None
             highest_avg_similarity = -1
