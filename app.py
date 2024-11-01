@@ -1,3 +1,4 @@
+#%% 導入區
 import streamlit as st
 import pandas as pd
 import zipfile
@@ -81,9 +82,57 @@ preprocess = transforms.Compose([
     ),
 ])
 
+#%% 使用者輸入區
+
+train_file = "image_features.pkl"
+
+# 編圖的編號上限
+label_limit = 10
+
 # 定義需要跳過的關鍵字列表，這些關鍵字出現在檔名時將跳過處理
 keywords_to_skip = ["_SL_","_SLB_", "_SMC_", "_Fout_", "-1", "_BL_","_FM_","_BSM_","_LSL_","Thumbs"]
 
+# set_b 只有在 set_a 不存在時才能使用，否則需要被移到外層資料夾
+substitute = [
+    {
+    "set_a": ['_D1_', '_D2_', '_D3_', '_D4_', '_D5_'],
+    "set_b": ['_H1_', '_H2_', '_H3_','_H4_','_H5_']
+    },
+    {
+    "set_a": ['_SC_'],
+    "set_b": ['_Sid_Torso_']
+    },
+    {
+    "set_a": ['_W_Model_'],
+    "set_b": ['_Sid_Model_']
+    }
+]
+
+# 可以被重複分配的角度
+reassigned_allowed = ["細節", "情境細節","情境帽子配戴照"]
+
+# 定義角度禁止規則，根據角度名稱出現與否來禁止特定角度
+angle_banning_rules = [
+    {
+    "if_appears_in_angle": ["D1", "D2", "D3", "D4", "D5"],
+    "banned_angle": "細節",
+    "banned_angle_logic": "等於"  # "等於" 或 "包含"
+    },
+    {
+    "if_appears_in_angle": ["HM1", "HM2", "HM3", "HM4", "HM5", "HM6", "HM7", "HM8", "HM9", "HM10"],
+    "banned_angle": "情境",
+    "banned_angle_logic": "包含"  # "等於" 或 "包含"
+    }
+]
+
+# 定義商品分類與其必須包含的檔名列表
+category_keywords_rules = {
+    "套裝": ["_Ftp_", "_Btp_", "_Fbp_", "_Bbp_"],
+    "雙面外套": ["_Fin_Model_", "_Fin_Torso_"],
+    "三合一外套": ["_Fex_Model_", "_Fin_eCom"]
+}
+
+#%% function
 def get_image_features(image, model):
     """
     提取圖像特徵的方法。
@@ -190,7 +239,7 @@ def rename_numbers_in_folder(results):
         # 按照編號排序
         folder_results.sort(key=lambda x: int(x["編號"]))
         for idx, result in enumerate(folder_results):
-            if idx < 10:
+            if idx < label_limit:
                 result["編號"] = f'{idx+1:02}'  # 編號格式為兩位數
             else:
                 result["編號"] = "超過上限"  # 超過編號上限時標記
@@ -257,8 +306,10 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
 
     return zip_buffer.getvalue()  # 返回壓縮檔的二進位數據
 
+#%% 主函數
+
 # 從 pickle 檔案中載入圖像特徵數據，並保存原始資料以供後續重置
-with open('image_features.pkl', 'rb') as f:
+with open(train_file, 'rb') as f:
     features_by_category = pickle.load(f)
     original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
 
@@ -350,20 +401,7 @@ if uploaded_zip and start_running:
     processed_folders = 0  # 已處理的資料夾數量
 
     # set_b 只有在 set_a 不存在時才能使用，否則需要被移到外層資料夾
-    group_conditions = [
-        {
-            "set_a": ['_D1_', '_D2_', '_D3_', '_D4_', '_D5_'],
-            "set_b": ['_H1_', '_H2_', '_H3_','_H4_','_H5_']
-        },
-        {
-            "set_a": ['_SC_'],
-            "set_b": ['_Sid_Torso_']
-        },
-        {
-            "set_a": ['_W_Model_'],
-            "set_b": ['_Sid_Model_']
-        }
-    ]
+    group_conditions = substitute
 
     # 遍歷每個圖像資料夾進行處理
     for folder in image_folders:
@@ -471,36 +509,15 @@ if uploaded_zip and start_running:
             st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
             continue
 
-        # 處理特殊的外套類型
-        suit_keywords = ["_Ftp_", "_Btp_", "_Fbp_", "_Bbp_"]
-        reversible_jacket_keywords = ["_Fin_Model_", "_Fin_Torso_"]
-        three_in_one_jacket_keywords = ["_Fex_Model_", "_Fin_eCom"]
-        
-        if "套裝" in features_by_category[selected_brand]:
-            suit_folder = any(
-                any(keyword in image_file for keyword in suit_keywords)
-                for image_file, image_path in image_files
-            )
-            if not suit_folder:
-                features_by_category[selected_brand].pop("套裝", None)
-
-        if "雙面外套" in features_by_category[selected_brand]:
-            reversible_jacket_folder = any(
-                any(keyword in image_file for keyword in reversible_jacket_keywords)
-                for image_file, image_path in image_files
-            )
-            if not reversible_jacket_folder:
-                # 如果資料夾中沒有雙面外套的關鍵字，則移除該分類
-                features_by_category[selected_brand].pop("雙面外套", None)
-
-        if "三合一外套" in features_by_category[selected_brand]:
-            three_in_one_jacket_folder = (
-                any("_Fex_Model_" in image_file for image_file, image_path in image_files) and 
-                any("_Fin_eCom" in image_file for image_file, image_path in image_files)
-            )
-            if not three_in_one_jacket_folder:
-                # 如果資料夾中沒有三合一外套的關鍵字，則移除該分類
-                features_by_category[selected_brand].pop("三合一外套", None)
+        # 資料夾必須含有以下檔名，才能夠被分配到指定的商品分類
+        for category, keywords in category_keywords_rules.items():
+            if category in features_by_category[selected_brand]:
+                category_folder = any(
+                    any(keyword in image_file for keyword in keywords)
+                    for image_file, image_path in image_files
+                )
+                if not category_folder:
+                    features_by_category[selected_brand].pop(category, None)
 
         # 如果有特殊分類，則設定為最佳分類
         if folder_special_category:
@@ -523,12 +540,12 @@ if uploaded_zip and start_running:
                             similarity = cosine_similarity(img_features, item_features)
                             total_similarity += similarity
                             num_items += 1
-        
+
                         avg_similarity = total_similarity / num_items if num_items > 0 else 0
                         if category not in category_similarities:
                             category_similarities[category] = []
                         category_similarities[category].append(avg_similarity)
-        
+
             # 計算每個分類的平均相似度並選擇最高的分類
             best_category = None
             highest_avg_similarity = -1
@@ -554,7 +571,8 @@ if uploaded_zip and start_running:
         used_angles = set()  # 已使用的角度集合
         final_results = {}  # 最終結果字典
 
-        assigned_special_D_angle = False  # 是否分配了特殊的 D 角度
+        # 初始化規則標誌
+        rule_flags = [False for _ in angle_banning_rules]
 
         # 遍歷每個圖像資料進行角度分配
         for img_data in folder_features:
@@ -562,6 +580,7 @@ if uploaded_zip and start_running:
             special_angles = img_data["special_angles"]
             special_category = img_data["special_category"]
             img_features = img_data["features"]
+            best_angle = None
 
             if special_angles:
                 # 過濾有效的特殊角度
@@ -596,7 +615,7 @@ if uploaded_zip and start_running:
                         )
                         
                         for angle, similarity in valid_angles_by_similarity:
-                            if angle not in ["細節", "情境細節","情境帽子配戴照"] and angle in used_angles:
+                            if angle not in reassigned_allowed and angle in used_angles:
                                 pass
                             else:
                                 best_angle = angle
@@ -614,8 +633,10 @@ if uploaded_zip and start_running:
                                 "最大相似度": f"{best_similarity * 100:.2f}%"
                             }
                             final_results[image_file] = label_info
-                            if best_angle in ["D1", "D2", "D3", "D4", "D5",'_H1_', '_H2_', '_H3_','_H4_','_H5_']:
-                                assigned_special_D_angle = True
+                            # 更新規則標誌
+                            for idx, rule in enumerate(angle_banning_rules):
+                                if best_angle in rule["if_appears_in_angle"]:
+                                    rule_flags[idx] = True
                         else:
                             st.warning(
                                 f"圖片 '{image_file}' 沒有可用的角度可以分配"
@@ -624,7 +645,7 @@ if uploaded_zip and start_running:
                     else:
                         # 只有一個有效的特殊角度
                         special_angle = valid_special_angles[0]
-                        if special_angle not in ["細節", "情境細節","情境帽子配戴照"] and special_angle in used_angles:
+                        if special_angle not in reassigned_allowed and special_angle in used_angles:
                             st.warning(
                                 f"角度 '{special_angle}' 已被使用，圖片 '{image_file}' 無法分配"
                             )
@@ -640,8 +661,10 @@ if uploaded_zip and start_running:
                                 "最大相似度": "100.00%"
                             }
                             final_results[image_file] = label_info
-                            if special_angle in ["D1", "D2", "D3", "D4", "D5",'_H1_', '_H2_', '_H3_','_H4_','_H5_']:
-                                assigned_special_D_angle = True
+                            # 更新規則標誌
+                            for idx, rule in enumerate(angle_banning_rules):
+                                if special_angle in rule["if_appears_in_angle"]:
+                                    rule_flags[idx] = True
                 else:
                     st.warning(
                         f"商品分類 '{best_category['category']}' 中沒有角度 '{', '.join(special_angles)}'，圖片 '{image_file}' 無法分配"
@@ -661,6 +684,18 @@ if uploaded_zip and start_running:
 
         image_similarity_store = {}
 
+        # 定義函數檢查角度是否被禁止
+        def is_banned_angle(item_angle, rule_flags):
+            for idx, rule in enumerate(angle_banning_rules):
+                if rule_flags[idx]:
+                    if rule["banned_angle_logic"] == "等於":
+                        if item_angle == rule["banned_angle"]:
+                            return True
+                    elif rule["banned_angle_logic"] == "包含":
+                        if rule["banned_angle"] in item_angle:
+                            return True
+            return False
+
         # 計算非特殊圖像與標籤的相似度
         for img_data in non_special_images:
             image_file = img_data["image_file"]
@@ -671,8 +706,10 @@ if uploaded_zip and start_running:
             image_similarity_list = []
             for item in filtered_by_category:
                 item_angle = item["labels"]["angle"]
-                if assigned_special_D_angle and item_angle == "細節":
+
+                if is_banned_angle(item_angle, rule_flags):
                     continue
+
                 item_features = item["features"]
                 similarity = cosine_similarity(
                     img_features, item_features
@@ -695,7 +732,7 @@ if uploaded_zip and start_running:
                     label["label"]["angle"] for label in unique_labels
                 ]:
                     unique_labels.append(candidate)
-                if len(unique_labels) == 10:
+                if len(unique_labels) == label_limit:
                     break
 
             image_similarity_store[image_file] = unique_labels
@@ -712,7 +749,11 @@ if uploaded_zip and start_running:
                 candidate = None
                 for candidate_candidate in similarity_list:
                     candidate_angle = candidate_candidate["label"]["angle"]
-                    if candidate_angle in ["細節", "情境細節","情境帽子配戴照"] or candidate_angle not in used_angles:
+
+                    if is_banned_angle(candidate_angle, rule_flags):
+                        continue
+                    
+                    if candidate_angle in reassigned_allowed or candidate_angle not in used_angles:
                         candidate = candidate_candidate
                         break
                 else:
@@ -728,7 +769,7 @@ if uploaded_zip and start_running:
             
             assigned_in_this_round = set()
             for angle, images in angle_to_images.items():
-                if angle in ["細節", "情境細節","情境帽子配戴照"]:
+                if angle in reassigned_allowed:
                     for image_file in images:
                         candidate = image_current_choices[image_file]
                         final_results[image_file] = {
