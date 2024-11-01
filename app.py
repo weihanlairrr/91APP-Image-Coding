@@ -82,7 +82,7 @@ preprocess = transforms.Compose([
     ),
 ])
 
-#%% 使用者輸入區
+#%% 檔案與自訂參數
 
 # 資料集檔名
 train_file = "image_features.pkl"
@@ -90,17 +90,17 @@ train_file = "image_features.pkl"
 # 檔名角度對照表
 angle_filename_reference = "ADS檔名角度對照表.xlsx"
 
+# 讀取 Excel 檔案
+logic_file_path = '角度分配條件.xlsx'
+
 # 編圖的編號上限
 label_limit = 10
 
-# 讀取 Excel 檔案
-file_path = '角度分配條件.xlsx'
-
 # 讀取「移到外層的檔名」的第一欄作為關鍵字列表，並確保所有元素為字串
-keywords_to_skip = pd.read_excel(file_path, sheet_name='移到外層的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
+keywords_to_skip = pd.read_excel(logic_file_path, sheet_name='移到外層的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
 
 # 讀取「有條件使用的檔名」，拆分 set_a 和 set_b 的逗號分隔值
-substitute_df = pd.read_excel(file_path, sheet_name='有條件使用的檔名', usecols=[0, 1])
+substitute_df = pd.read_excel(logic_file_path, sheet_name='有條件使用的檔名', usecols=[0, 1])
 substitute = []
 for _, row in substitute_df.iterrows():
     substitute.append({
@@ -109,10 +109,10 @@ for _, row in substitute_df.iterrows():
     })
 
 # 讀取「可以重複分配的角度」的第一欄作為可重複分配的角度列表
-reassigned_allowed = pd.read_excel(file_path, sheet_name='可以重複分配的角度', usecols=[0]).iloc[:, 0].dropna().tolist()
+reassigned_allowed = pd.read_excel(logic_file_path, sheet_name='可以重複分配的角度', usecols=[0]).iloc[:, 0].dropna().tolist()
 
 # 讀取「角度禁止規則」的前3欄並組裝成結構化字典
-angle_banning_df = pd.read_excel(file_path, sheet_name='角度禁止規則', usecols=[0, 1, 2])
+angle_banning_df = pd.read_excel(logic_file_path, sheet_name='角度禁止規則', usecols=[0, 1, 2])
 angle_banning_rules = [
     {
         "if_appears_in_angle": row.iloc[0].split(','),  # 將條件角度分隔為列表
@@ -123,7 +123,7 @@ angle_banning_rules = [
 ]
 
 # 讀取「商品分類及關鍵字條件」的前3欄並組裝成字典
-category_rules_df = pd.read_excel(file_path, sheet_name='商品分類及關鍵字條件', usecols=[0, 1, 2])
+category_rules_df = pd.read_excel(logic_file_path, sheet_name='商品分類及關鍵字條件', usecols=[0, 1, 2])
 category_rules = {
     row.iloc[0]: {
         "keywords": row.iloc[1].split(','),
