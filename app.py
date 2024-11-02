@@ -20,7 +20,7 @@ st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 # 自定義 CSS 以調整頁面樣式
 custom_css = """
 <style>
-.main {
+section.stMain{
     padding-left: 28%; 
     padding-right: 28%;
 }
