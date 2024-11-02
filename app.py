@@ -346,12 +346,18 @@ selectbox_placeholder = st.empty()
 button_placeholder = st.empty()
 
 if uploaded_zip:
-    with selectbox_placeholder:
-        selected_brand = st.selectbox(
-            "請選擇品牌", 
-            list(features_by_category.keys())  # 從載入的特徵數據中獲取品牌列表
-        )
+    if len(features_by_category.keys()) == 1:
+        # 只有一個品牌，直接選擇這個品牌
+        selected_brand = list(features_by_category.keys())[0]
+    else:
+        # 多個品牌，顯示選擇框
+        with selectbox_placeholder:
+            selected_brand = st.selectbox(
+                "請選擇品牌", 
+                list(features_by_category.keys())  # 從載入的特徵數據中獲取品牌列表
+            )
     with button_placeholder:
+        st.write("\n")
         start_running = st.button("開始執行")  # 開始執行按鈕
 
 if uploaded_zip and start_running:
