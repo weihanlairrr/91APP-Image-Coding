@@ -7,10 +7,12 @@ import requests
 from io import BytesIO
 from tqdm import tqdm
 import os
+from torchvision.models import ResNet50_Weights
 
 # 初始化ResNet模型
 device = "cuda" if torch.cuda.is_available() else "cpu"
-resnet = models.resnet101(pretrained=True)
+weights = ResNet50_Weights.DEFAULT  # 使用最新的權重配置
+resnet = models.resnet50(weights=weights)  
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  # 去掉最後的全連接層，只提取特徵
 resnet.eval().to(device)
 
@@ -32,6 +34,7 @@ def get_image_features(image, model):
 # 定義檢查並載入已有的.pkl檔案
 def load_existing_features(file_path):
     if os.path.exists(file_path):
+        print("使用既有的訓練資料")
         with open(file_path, 'rb') as f:
             return pickle.load(f)
     return {}
@@ -44,9 +47,16 @@ features_by_category = load_existing_features(feature_file_path)
 
 # 設定要讀取的多個 Excel 檔案路徑
 excel_files = [
-    '/Users/laiwei/Desktop/91APP_Image_Coding/訓練資料集(鞋子).xlsx',
-    '/Users/laiwei/Desktop/91APP_Image_Coding/訓練資料集(上衣).xlsx',
-    '/Users/laiwei/Desktop/91APP_Image_Coding/訓練資料集(包包).xlsx'
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/鞋子.xlsx',
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/上衣.xlsx',
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/下身.xlsx',
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/雙面外套.xlsx',
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/帽子.xlsx',
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/襪子.xlsx',
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/包包.xlsx',
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/其他配件.xlsx',
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/套裝.xlsx',
+    '/Users/laiwei/Desktop/91APP_Image_Coding/資料集/三合一外套.xlsx',
 ]
 
 # 逐個讀取和處理Excel文件
