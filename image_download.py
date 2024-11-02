@@ -5,14 +5,14 @@ from zipfile import ZipFile
 import json
 from pathlib import Path
 
-# 輸入的JSON資料
-json_input = '{"IH7795":"7","JR7675":"10"}'
+# 輸入的 JSON 資料
+json_input = '["JF1367"]'
 
-# 根據貨號與張數產生圖片網址
-def generate_urls(catalog, count):
+# 根據貨號產生 10 張圖片的網址
+def generate_urls(catalog):
     base_url = "https://tpimage.91app.com/adidas/"
     urls = []
-    for i in range(1, int(count) + 1):
+    for i in range(1, 11):
         img_num = f"{i:02d}.jpg"
         url = f"{base_url}{catalog}_OK/1-Main/All/{catalog}_{img_num}"
         urls.append(url)
@@ -22,9 +22,14 @@ def generate_urls(catalog, count):
 def download_images(urls, folder_name):
     os.makedirs(folder_name, exist_ok=True)
     for i, url in enumerate(urls):
-        img_data = requests.get(url).content
-        with open(os.path.join(folder_name, f'image_{i+1}.jpg'), 'wb') as handler:
-            handler.write(img_data)
+        response = requests.get(url)
+        
+        # 檢查是否成功獲取圖片
+        if response.status_code == 200:
+            with open(os.path.join(folder_name, f'image_{i+1}.jpg'), 'wb') as handler:
+                handler.write(response.content)
+        else:
+            pass
 
 # 獲取使用者的 Downloads 資料夾路徑
 def get_downloads_folder():
@@ -34,7 +39,7 @@ def get_downloads_folder():
 
 # 處理多組資料夾
 def process_data(json_data):
-    data = json.loads(json_data)
+    catalogs = json.loads(json_data)
     
     # 找到使用者的 Downloads 資料夾
     downloads_dir = get_downloads_folder()
@@ -43,9 +48,9 @@ def process_data(json_data):
     output_dir = downloads_dir / 'all_images'
     os.makedirs(output_dir, exist_ok=True)
     
-    for catalog, count in data.items():
+    for catalog in catalogs:
         folder_name = output_dir / f"{catalog}"
-        urls = generate_urls(catalog, count)
+        urls = generate_urls(catalog)
         
         # 下載圖片
         download_images(urls, folder_name)
@@ -62,7 +67,7 @@ def process_data(json_data):
     
     # 刪除總資料夾及所有子資料夾
     shutil.rmtree(output_dir)
-    print(f"已完成所有資料夾的打包並刪除臨時資料夾。")
+    print("已完成所有資料夾的打包並刪除臨時資料夾。")
 
 # 處理輸入資料
 process_data(json_input)
