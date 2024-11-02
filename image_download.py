@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 # 輸入的 JSON 資料
-json_input = '["JF1367",]'
+json_input = '["II3507","JG1442","IA1284","IL4882","IL8441"]'
 
 # 根據貨號產生 10 張圖片的網址
 def generate_urls(catalog):
@@ -29,7 +29,7 @@ def download_images(urls, folder_name):
             with open(os.path.join(folder_name, f'image_{i+1}.jpg'), 'wb') as handler:
                 handler.write(response.content)
         else:
-            print(f"圖片 {url} 不存在，跳過下載。")
+            pass
 
 # 獲取使用者的 Downloads 資料夾路徑
 def get_downloads_folder():
