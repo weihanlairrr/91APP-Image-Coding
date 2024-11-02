@@ -357,7 +357,6 @@ if uploaded_zip:
                 list(features_by_category.keys())  # 從載入的特徵數據中獲取品牌列表
             )
     with button_placeholder:
-        st.write("\n")
         start_running = st.button("開始執行")  # 開始執行按鈕
 
 if uploaded_zip and start_running:
