@@ -90,17 +90,14 @@ train_file = "image_features.pkl"
 # 檔名角度對照表
 angle_filename_reference = "ADS檔名角度對照表.xlsx"
 
-# 讀取 Excel 檔案
-logic_file_path = '角度分配條件.xlsx'
-
 # 編圖的編號上限
 label_limit = 10
 
 # 讀取「移到外層的檔名」的第一欄作為關鍵字列表，並確保所有元素為字串
-keywords_to_skip = pd.read_excel(logic_file_path, sheet_name='移到外層的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
+keywords_to_skip = pd.read_excel(angle_filename_reference, sheet_name='移到外層的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
 
 # 讀取「有條件使用的檔名」，拆分 set_a 和 set_b 的逗號分隔值
-substitute_df = pd.read_excel(logic_file_path, sheet_name='有條件使用的檔名', usecols=[0, 1])
+substitute_df = pd.read_excel(angle_filename_reference, sheet_name='有條件使用的檔名', usecols=[0, 1])
 substitute = []
 for _, row in substitute_df.iterrows():
     substitute.append({
@@ -109,10 +106,10 @@ for _, row in substitute_df.iterrows():
     })
 
 # 讀取「可以重複分配的角度」的第一欄作為可重複分配的角度列表
-reassigned_allowed = pd.read_excel(logic_file_path, sheet_name='可以重複分配的角度', usecols=[0]).iloc[:, 0].dropna().tolist()
+reassigned_allowed = pd.read_excel(angle_filename_reference, sheet_name='可以重複分配的角度', usecols=[0]).iloc[:, 0].dropna().tolist()
 
 # 讀取「角度禁止規則」的前3欄並組裝成結構化字典
-angle_banning_df = pd.read_excel(logic_file_path, sheet_name='角度禁止規則', usecols=[0, 1, 2])
+angle_banning_df = pd.read_excel(angle_filename_reference, sheet_name='角度禁止規則', usecols=[0, 1, 2])
 angle_banning_rules = [
     {
         "if_appears_in_angle": row.iloc[0].split(','),  # 將條件角度分隔為列表
@@ -123,7 +120,7 @@ angle_banning_rules = [
 ]
 
 # 讀取「商品分類及關鍵字條件」的前3欄並組裝成字典
-category_rules_df = pd.read_excel(logic_file_path, sheet_name='商品分類及關鍵字條件', usecols=[0, 1, 2])
+category_rules_df = pd.read_excel(angle_filename_reference, sheet_name='商品分類及關鍵字條件', usecols=[0, 1, 2])
 category_rules = {
     row.iloc[0]: {
         "keywords": row.iloc[1].split(','),
@@ -378,7 +375,7 @@ if uploaded_zip and start_running:
     special_mappings = {}
     if selected_brand == "ADS":
         # 讀取特定品牌的檔名角度對照表
-        df_angles = pd.read_excel(angle_filename_reference)
+        df_angles = pd.read_excel(angle_filename_reference, sheet_name="檔名角度對照表")
         for idx, row in df_angles.iterrows():
             keyword = str(row['檔名判斷']).strip()
             category_raw = str(row['商品分類']).strip()
@@ -390,7 +387,8 @@ if uploaded_zip and start_running:
                 match = re.match(r'^(.*)\((.*)\)$', category_raw)
                 if match:
                     category = match.group(1).strip()
-                    category_filename = match.group(2).strip()
+                    category_filename_raw = match.group(2).strip()
+                    category_filename = [x.strip() for x in category_filename_raw.split(',')]  # 修改此處，支持多個條件
                 else:
                     category = category_raw
                     category_filename = None
@@ -496,7 +494,8 @@ if uploaded_zip and start_running:
                         special_category = mapping['category']
                         category_filename = mapping.get('category_filename')
                         if category_filename:
-                            if any(category_filename in fname for fname in image_filenames):
+                            # 修改此處，支持多個 category_filename 條件
+                            if any(cond in fname for fname in image_filenames for cond in category_filename):
                                 pass 
                             else:
                                 special_category = None 
