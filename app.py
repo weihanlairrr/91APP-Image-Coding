@@ -377,8 +377,8 @@ if uploaded_zip and start_running:
         # 讀取特定品牌的檔名角度對照表
         df_angles = pd.read_excel(angle_filename_reference, sheet_name="檔名角度對照表")
         for idx, row in df_angles.iterrows():
-            keyword = str(row['檔名判斷']).strip()
-            category_raw = str(row['商品分類']).strip()
+            keyword = str(row.iloc[0]).strip()
+            category_raw = str(row.iloc[1]).strip()
             if category_raw == 'nan' or category_raw == '':
                 category = None
                 category_filename = None
@@ -392,7 +392,7 @@ if uploaded_zip and start_running:
                 else:
                     category = category_raw
                     category_filename = None
-            angle = str(row['對應角度']).strip()
+            angle = str(row.iloc[2]).strip()
             angles = [a.strip() for a in angle.split(',')]
             special_mappings[keyword] = {
                 'category': category, 
