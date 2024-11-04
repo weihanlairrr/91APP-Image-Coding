@@ -181,9 +181,15 @@ def unzip_file(uploaded_zip):
             # 根據不同的作業系統處理檔名編碼
             if system == "Windows":
                 try:
-                    member.filename = member.filename.encode('utf-8').decode('utf-8')
-                except UnicodeDecodeError:
-                    member.filename = member.filename.encode('utf-8').decode('latin1')
+                    # 首先嘗試使用 GBK 編碼解碼
+                    member.filename = member.filename.encode('cp437').decode('gbk')
+                except (UnicodeDecodeError, LookupError):
+                    try:
+                        # 如果 GBK 失敗，則嘗試使用 Big5 編碼解碼
+                        member.filename = member.filename.encode('cp437').decode('big5')
+                    except (UnicodeDecodeError, LookupError):
+                        # 最後，嘗試使用 UTF-8 解碼
+                        member.filename = member.filename.encode('cp437').decode('utf-8', errors='ignore')
             elif system == "Darwin":
                 try:
                     member.filename = member.filename.encode('cp437').decode('utf-8')
