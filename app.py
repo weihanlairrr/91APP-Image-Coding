@@ -347,7 +347,7 @@ with tab1:
     st.write("\n")
     # 創建文件上傳器，允許上傳 zip 檔案
     uploaded_zip = st.file_uploader(
-        "上傳 zip 檔案", 
+        "上傳 Zip 檔案", 
         type=["zip"], 
         key='file_uploader_' + str(st.session_state['file_uploader_key1'])
     )
