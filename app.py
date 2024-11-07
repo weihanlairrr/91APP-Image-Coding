@@ -5,7 +5,7 @@ import zipfile
 import os
 import torch
 from torchvision import models, transforms
-from PIL import Image
+from PIL import Image, ImageOps
 from io import BytesIO
 import pickle
 import shutil
@@ -900,6 +900,8 @@ with tab2:
         st.session_state['filename_changes'] = {}
     if 'confirmed_changes' not in st.session_state or not isinstance(st.session_state['confirmed_changes'], dict):
         st.session_state['confirmed_changes'] = {}  # 確保為字典
+    if 'image_cache' not in st.session_state:
+        st.session_state['image_cache'] = {}
 
     uploaded_file = st.file_uploader(
         "上傳編圖結果 Zip 檔", 
@@ -936,6 +938,8 @@ with tab2:
                             st.session_state['filename_changes'][selected_folder] = {}
                         if selected_folder not in st.session_state['confirmed_changes']:
                             st.session_state['confirmed_changes'][selected_folder] = False
+                        if selected_folder not in st.session_state['image_cache']:
+                            st.session_state['image_cache'][selected_folder] = {}
 
                         with st.form(f"filename_form_{selected_folder}"):
                             cols = st.columns(5)
@@ -944,9 +948,18 @@ with tab2:
                                 if idx % 5 == 0 and idx != 0:
                                     cols = st.columns(5)
                                 col = cols[idx % 5]
-                                image_path = os.path.join(img_folder_path, image_file)
-                                image = Image.open(image_path)
-                                image.thumbnail((200, 200))
+
+                                # 檢查是否已經緩存圖片
+                                if image_file not in st.session_state['image_cache'][selected_folder]:
+                                    # 載入圖片並填充為固定大小顯示框
+                                    image_path = os.path.join(img_folder_path, image_file)
+                                    image = Image.open(image_path)
+                                    image = ImageOps.pad(image, (800, 800), method=Image.Resampling.LANCZOS)
+                                    st.session_state['image_cache'][selected_folder][image_file] = image
+                                else:
+                                    image = st.session_state['image_cache'][selected_folder][image_file]
+
+                                # 顯示已緩存的圖片
                                 col.image(image, use_column_width=True)
 
                                 # 取得檔名與副檔名
@@ -1030,5 +1043,3 @@ with tab2:
                     st.write("選擇的資料夾中不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.write("壓縮檔案中未找到任何資料夾。")
-
-
