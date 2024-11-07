@@ -26,8 +26,8 @@ div.stTextInput > label {
     display: none;
 }   
 section.stMain {
-    padding-left: 28%; 
-    padding-right: 28%;
+    padding-left: 20%; 
+    padding-right: 20%;
 }
 div.block-container {
     padding-top: 3rem;
@@ -917,11 +917,18 @@ with tab2:
             if top_level_folders:
                 selected_folder = st.radio("選擇一個資料夾", top_level_folders, horizontal=True, label_visibility="collapsed")
                 st.write("\n")
-                
-                all_images_path = os.path.join(tmpdirname, selected_folder, '1-Main', 'All')
-                
-                if os.path.exists(all_images_path):
-                    image_files = [f for f in os.listdir(all_images_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
+
+                # 檢查2-IMG是否存在
+                img_folder_path = os.path.join(tmpdirname, selected_folder, '2-IMG')
+                use_full_filename = False
+                if not os.path.exists(img_folder_path):
+                    img_folder_path = os.path.join(tmpdirname, selected_folder, '1-Main', 'All')
+                    use_full_filename = False
+                else:
+                    use_full_filename = True
+
+                if os.path.exists(img_folder_path):
+                    image_files = [f for f in os.listdir(img_folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
                     
                     if image_files:
                         # 初始化 filename_changes 和 confirmed_changes
@@ -937,23 +944,28 @@ with tab2:
                                 if idx % 5 == 0 and idx != 0:
                                     cols = st.columns(5)
                                 col = cols[idx % 5]
-                                image_path = os.path.join(all_images_path, image_file)
+                                image_path = os.path.join(img_folder_path, image_file)
                                 image = Image.open(image_path)
                                 image.thumbnail((200, 200))
                                 col.image(image, use_column_width=True)
-                                
-                                # 解析原始檔名
+
+                                # 取得檔名與副檔名
                                 filename_without_ext = os.path.splitext(image_file)[0]
                                 extension = os.path.splitext(image_file)[1]
-                                last_underscore_index = filename_without_ext.rfind('_')
-                                if last_underscore_index != -1:
-                                    default_text = filename_without_ext[last_underscore_index+1:]
-                                    prefix = filename_without_ext[:last_underscore_index+1]
-                                else:
-                                    default_text = filename_without_ext
-                                    prefix = ''
                                 
-                                # 顯示已修改過的精簡檔名
+                                # 根據資料夾類型顯示檔名
+                                if use_full_filename:  # 2-IMG資料夾，顯示完整檔名
+                                    default_text = filename_without_ext + extension
+                                else:  # 1-Main/All資料夾，顯示精簡檔名但保留前綴
+                                    last_underscore_index = filename_without_ext.rfind('_')
+                                    if last_underscore_index != -1:
+                                        prefix = filename_without_ext[:last_underscore_index+1]
+                                        default_text = filename_without_ext[last_underscore_index+1:]
+                                    else:
+                                        prefix = ""
+                                        default_text = filename_without_ext
+
+                                # 顯示已修改過的檔名
                                 if image_file in st.session_state['filename_changes'][selected_folder]:
                                     modified_text = st.session_state['filename_changes'][selected_folder][image_file]['text']
                                 else:
@@ -961,11 +973,11 @@ with tab2:
 
                                 text_input_key = f"{selected_folder}_{image_file}"
                                 
-                                # 顯示精簡檔名的輸入框
+                                # 顯示檔名的輸入框
                                 new_text = col.text_input('', value=modified_text, key=text_input_key)
                                 
-                                # 重新組合新的檔名
-                                new_filename = prefix + new_text + extension
+                                # 重新組合新的檔名，1-Main/All 加回前綴，2-IMG 顯示原檔名
+                                new_filename = new_text if use_full_filename else prefix + new_text + extension
                                 
                                 # 儲存新的檔名和精簡部分
                                 current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
@@ -980,8 +992,10 @@ with tab2:
                                     st.session_state['confirmed_changes'][selected_folder] = False
                                 else:
                                     st.session_state['confirmed_changes'][selected_folder] = True
-                                    # 更新 filename_changes
-                                    st.session_state['filename_changes'][selected_folder] = current_filenames
+                                    # 更新 filename_changes，僅儲存已修改的檔名
+                                    st.session_state['filename_changes'][selected_folder] = {
+                                        file: data for file, data in current_filenames.items() if data['new_filename'] != file
+                                    }
                             
                         # 顯示下載按鈕，當至少有一個資料夾確認修改後
                         if any(st.session_state['confirmed_changes'].values()):
@@ -994,8 +1008,9 @@ with tab2:
                                             full_path = os.path.join(root, file)
                                             rel_path = os.path.relpath(full_path, tmpdirname)
                                             path_parts = rel_path.split(os.sep)
-                                            # 如果在 filename_changes 中，應用已修改的檔名
-                                            if folder_name in st.session_state['filename_changes'] and file in st.session_state['filename_changes'][folder_name]:
+                                            # 如果在 filename_changes 中，僅應用已修改的檔名
+                                            if (folder_name in st.session_state['filename_changes'] and 
+                                                file in st.session_state['filename_changes'][folder_name]):
                                                 new_filename = st.session_state['filename_changes'][folder_name][file]['new_filename']
                                                 path_parts[-1] = new_filename
                                                 rel_path = os.path.join(*path_parts)
@@ -1012,6 +1027,8 @@ with tab2:
                     else:
                         st.write("未找到圖片。")
                 else:
-                    st.write("選擇的資料夾中不存在 '1-Main/All' 資料夾。")
+                    st.write("選擇的資料夾中不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.write("壓縮檔案中未找到任何資料夾。")
+
+
