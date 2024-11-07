@@ -10,11 +10,11 @@ from io import BytesIO
 import pickle
 import shutil
 import numpy as np
-import platform
 from torchvision.models import ResNet50_Weights
 import re
 import tempfile
 from collections import Counter
+import chardet
 
 # 設定 Streamlit 頁面的標題和圖示
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
@@ -170,44 +170,30 @@ def reset_file_uploader():
 
 def unzip_file(uploaded_zip):
     """
-    解壓上傳的壓縮檔，並處理解壓過程中的編碼問題。
+    解壓上傳的壓縮檔，並根據檔名自動偵測編碼。
     參數:
         uploaded_zip: 上傳的壓縮檔案
     """
-    system = platform.system()  # 獲取作業系統名稱
-    
     with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
         for member in zip_ref.infolist():
             # 跳過系統自動生成的文件
             if "__MACOSX" in member.filename or member.filename.startswith('.'):
                 continue
             
-            # 根據不同的作業系統處理檔名編碼
-            if system == "Windows":
-                try:
-                    # 首先嘗試使用 GBK 編碼解碼
-                    member.filename = member.filename.encode('cp437').decode('gbk')
-                except (UnicodeDecodeError, LookupError):
-                    try:
-                        # 如果 GBK 失敗，則嘗試使用 Big5 編碼解碼
-                        member.filename = member.filename.encode('cp437').decode('big5')
-                    except (UnicodeDecodeError, LookupError):
-                        # 最後，嘗試使用 UTF-8 解碼
-                        member.filename = member.filename.encode('cp437').decode('utf-8', errors='ignore')
-            elif system == "Darwin":
-                try:
-                    member.filename = member.filename.encode('cp437').decode('utf-8')
-                except UnicodeDecodeError:
-                    member.filename = member.filename.encode('cp437').decode('latin1')
-            else:
-                try:
-                    member.filename = member.filename.encode('utf-8').decode('utf-8')
-                except UnicodeDecodeError:
-                    member.filename = member.filename.encode('utf-8').decode('latin1')
+            # 使用 chardet 偵測檔名的編碼
+            raw_bytes = member.filename.encode('utf-8', errors='ignore')  # 轉成 byte 格式以利編碼檢測
+            detected_encoding = chardet.detect(raw_bytes)['encoding']
+            
+            try:
+                # 使用偵測到的編碼解碼檔名
+                member.filename = raw_bytes.decode(detected_encoding, errors='ignore')
+            except (UnicodeDecodeError, LookupError, TypeError):
+                # 如果偵測失敗，則使用 UTF-8 編碼並忽略錯誤
+                member.filename = raw_bytes.decode('utf-8', errors='ignore')
             
             # 解壓每個檔案到指定的資料夾
             zip_ref.extract(member, "uploaded_images")
-
+            
 def get_images_in_folder(folder_path):
     """
     獲取指定資料夾中的所有圖像檔案。
@@ -1044,8 +1030,8 @@ with tab2:
                                 on_click=reset_file_uploader
                             )
                     else:
-                        st.write("未找到圖片。")
+                        st.error("未找到圖片。")
                 else:
-                    st.write("選擇的資料夾中不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
+                    st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
-                st.write("壓縮檔案中未找到任何資料夾。")
+                st.error("壓縮檔案中未找到任何資料夾。")
