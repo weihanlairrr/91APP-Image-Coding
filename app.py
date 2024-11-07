@@ -909,6 +909,12 @@ with tab2:
         key='file_uploader_' + str(st.session_state['file_uploader_key2'])
     )
 
+    # 當上傳檔案被移除時重設狀態
+    if uploaded_file is None:
+        st.session_state['filename_changes'] = {}
+        st.session_state['confirmed_changes'] = {}
+        st.session_state['image_cache'] = {}
+
     if uploaded_file is not None:
         with tempfile.TemporaryDirectory() as tmpdirname:
             with zipfile.ZipFile(uploaded_file) as zip_ref:
