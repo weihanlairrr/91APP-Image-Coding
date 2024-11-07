@@ -922,7 +922,9 @@ with tab2:
                     use_full_filename = True
 
                 if os.path.exists(img_folder_path):
-                    image_files = [f for f in os.listdir(img_folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
+                    image_files = sorted(
+                        [f for f in os.listdir(img_folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
+                    )
                     
                     if image_files:
                         # 初始化 filename_changes 和 confirmed_changes
