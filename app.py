@@ -936,12 +936,12 @@ with tab2:
                             st.session_state['image_cache'][selected_folder] = {}
 
                         with st.form(f"filename_form_{selected_folder}"):
-                            cols = st.columns(5)
+                            cols = st.columns(6)
                             current_filenames = {}
                             for idx, image_file in enumerate(image_files):
-                                if idx % 5 == 0 and idx != 0:
-                                    cols = st.columns(5)
-                                col = cols[idx % 5]
+                                if idx % 6 == 0 and idx != 0:
+                                    cols = st.columns(6)
+                                col = cols[idx % 6]
 
                                 # 檢查是否已經緩存圖片
                                 if image_file not in st.session_state['image_cache'][selected_folder]:
