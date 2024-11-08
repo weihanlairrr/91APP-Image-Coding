@@ -15,6 +15,8 @@ import re
 import tempfile
 from collections import Counter
 import chardet
+from numba import njit
+
 
 # 設定 Streamlit 頁面的標題和圖示
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
@@ -150,15 +152,15 @@ def get_image_features(image, model):
         features = model(image).cpu().numpy().flatten()  # 提取特徵並展平
     return features
 
+@njit
 def cosine_similarity(a, b):
     """
-    計算兩個向量之間的餘弦相似度。
-    參數:
-        a, b: numpy 陣列，待比較的向量
-    回傳:
-        餘弦相似度值
+    使用 Numba 加速的餘弦相似度計算。
     """
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    dot_product = np.dot(a, b)
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    return dot_product / (norm_a * norm_b)
 
 def reset_file_uploader():
     """
