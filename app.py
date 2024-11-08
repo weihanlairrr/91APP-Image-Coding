@@ -14,7 +14,7 @@ import re
 import tempfile
 from collections import Counter
 import chardet
-from numba import njit
+import faiss  
 
 # 設定 Streamlit 頁面的標題和圖示
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
@@ -150,15 +150,16 @@ def get_image_features(image, model):
         features = model(image).cpu().numpy().flatten()  # 提取特徵並展平
     return features
 
-@njit
-def cosine_similarity(a, b):
+def l2_normalize(vectors):
     """
-    使用 Numba 加速的餘弦相似度計算。
+    對向量進行 L2 正規化。
+    參數:
+        vectors: 2D numpy array (n_samples, n_features)
+    回傳:
+        正規化後的向量
     """
-    dot_product = np.dot(a, b)
-    norm_a = np.linalg.norm(a)
-    norm_b = np.linalg.norm(b)
-    return dot_product / (norm_a * norm_b)
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    return vectors / norms
 
 def reset_file_uploader():
     """
@@ -314,7 +315,18 @@ def category_match(image_files, keywords, match_all):
         return all(any(keyword in image_file for image_file in image_files) for keyword in keywords)
     else:
         return any(any(keyword in image_file for image_file in image_files) for keyword in keywords)
-    
+
+def is_banned_angle(item_angle, rule_flags):
+    for idx, rule in enumerate(angle_banning_rules):
+        if rule_flags[idx]:
+            if rule["banned_angle_logic"] == "等於":
+                if item_angle == rule["banned_angle"]:
+                    return True
+            elif rule["banned_angle_logic"] == "包含":
+                if rule["banned_angle"] in item_angle:
+                    return True
+    return False    
+
 #%% 主函數
 
 # 從 pickle 檔案中載入圖像特徵數據，並保存原始資料以供後續重置
@@ -355,7 +367,7 @@ with tab1:
                 )
         with button_placeholder:
             start_running = st.button("開始執行")  # 開始執行按鈕
-    
+
     if uploaded_zip and start_running:
         # 清空選擇框和按鈕的佔位符
         selectbox_placeholder.empty()
@@ -539,58 +551,61 @@ with tab1:
                     'category': folder_special_category
                 }
             else:
-                # 計算每個分類的相似度，選擇相似度最高的分類
+                # 修改開始：使用 Faiss 與餘弦相似度計算
+                # 準備特徵數據
                 category_similarities = {}
-                for img_data in folder_features:
-                    img_features = img_data["features"]
+                for brand in features_by_category:
+                    for category in features_by_category[brand]:
+                        labeled_features = features_by_category[brand][category]["labeled_features"]
+                        feature_array = np.array([item["features"] for item in labeled_features], dtype=np.float32)
+                        # L2 正規化
+                        feature_array = l2_normalize(feature_array)
+                        # 建立 Faiss 索引（內積）
+                        index = faiss.IndexFlatIP(feature_array.shape[1])
+                        index.add(feature_array)
+                        
+                        # 對資料夾中的所有圖像進行查詢
+                        folder_similarities = []
+                        for img_data in folder_features:
+                            img_features = img_data["features"].astype(np.float32).reshape(1, -1)
+                            # L2 正規化
+                            img_features = l2_normalize(img_features)
+                            similarities, _ = index.search(img_features, k=3)
+                            avg_similarity = np.mean(similarities)
+                            folder_similarities.append(avg_similarity)
+                        
+                        # 計算該分類的平均相似度
+                        avg_similarity = np.mean(folder_similarities)
+                        category_similarities[category] = avg_similarity
                 
-                    for brand in features_by_category:
-                        for category in features_by_category[brand]:
-                            image_similarities = []
-                            
-                            # 計算該圖像與分類中每個標籤特徵的相似度
-                            for item in features_by_category[brand][category]["labeled_features"]:
-                                item_features = item["features"]
-                                similarity = cosine_similarity(img_features, item_features)
-                                image_similarities.append(similarity)
-                            
-                            # 將相似度排序，取前3個最高的相似度（如果圖片不足3張則取全部）
-                            top_similarities = sorted(image_similarities, reverse=True)[:3]
-                            avg_top_similarity = sum(top_similarities) / len(top_similarities)
-                            
-                            # 儲存分類的平均相似度
-                            if category not in category_similarities:
-                                category_similarities[category] = []
-                            category_similarities[category].append(avg_top_similarity)
-                
-                # 計算每個分類的平均相似度並選擇最高的分類
-                best_category = None
-                highest_avg_similarity = -1
-                for category, similarities in category_similarities.items():
-                    folder_avg_similarity = sum(similarities) / len(similarities)
-                    if folder_avg_similarity > highest_avg_similarity:
-                        highest_avg_similarity = folder_avg_similarity
-                        best_category = {
-                            'brand': selected_brand, 
-                            'category': category
-                        }
-    
+                # 選擇平均相似度最高的分類
+                if category_similarities:
+                    best_category_name = max(category_similarities, key=category_similarities.get)
+                    best_category = {
+                        'brand': selected_brand,
+                        'category': best_category_name
+                    }
+                else:
+                    st.warning(f"資料夾 {folder} 無法匹配任何分類，跳過此資料夾")
+                    continue
+                # 修改結束
+
             # 根據最佳分類獲取相關的標籤和編號
             filtered_by_category = features_by_category[selected_brand][
                 best_category["category"]
             ]["labeled_features"]
-    
+
             angle_to_number = {
                 item["labels"]["angle"]: item["labels"]["number"] 
                 for item in filtered_by_category
             }
-    
+
             used_angles = set()  # 已使用的角度集合
             final_results = {}  # 最終結果字典
-    
+
             # 初始化規則標誌
             rule_flags = [False for _ in angle_banning_rules]
-    
+
             # 遍歷每個圖像資料進行角度分配
             for img_data in folder_features:
                 image_file = img_data["image_file"]
@@ -598,7 +613,7 @@ with tab1:
                 special_category = img_data["special_category"]
                 img_features = img_data["features"]
                 best_angle = None
-    
+
                 if special_angles:
                     # 過濾有效的特殊角度
                     valid_special_angles = [
@@ -612,18 +627,24 @@ with tab1:
                             
                             # 根據相似度選擇最佳角度
                             for angle in valid_special_angles:
-                                max_similarity = -1
-                                for item in filtered_by_category:
-                                    if item["labels"]["angle"] == angle:
-                                        sample_features = item["features"]
-                                        similarity = cosine_similarity(
-                                            img_features, sample_features
-                                        )
-                                        if similarity > max_similarity:
-                                            max_similarity = similarity
-                                
+                                # 修改開始：使用 Faiss 查詢特定角度的相似度
+                                angle_features = [
+                                    item["features"] for item in filtered_by_category 
+                                    if item["labels"]["angle"] == angle
+                                ]
+                                if not angle_features:
+                                    continue
+                                angle_features = np.array(angle_features, dtype=np.float32)
+                                # L2 正規化
+                                angle_features = l2_normalize(angle_features)
+                                index = faiss.IndexFlatIP(angle_features.shape[1])
+                                index.add(angle_features)
+                                img_query = l2_normalize(img_features.astype(np.float32).reshape(1, -1))
+                                similarities, _ = index.search(img_query, k=1)
+                                similarity_percentage = similarities[0][0] * 100
+                                # 修改結束
                                 valid_angles_by_similarity.append(
-                                    (angle, max_similarity)
+                                    (angle, similarity_percentage)
                                 )
                             
                             # 根據相似度排序
@@ -631,12 +652,12 @@ with tab1:
                                 key=lambda x: x[1], reverse=True
                             )
                             
-                            for angle, similarity in valid_angles_by_similarity:
+                            for angle, similarity_percentage in valid_angles_by_similarity:
                                 if angle not in reassigned_allowed and angle in used_angles:
                                     pass
                                 else:
                                     best_angle = angle
-                                    best_similarity = similarity
+                                    best_similarity = similarity_percentage
                                     break
                         
                             if best_angle:
@@ -647,7 +668,7 @@ with tab1:
                                     "商品分類": best_category["category"],
                                     "角度": best_angle,
                                     "編號": angle_to_number[best_angle],
-                                    "最大相似度": f"{best_similarity * 100:.2f}%"
+                                    "最大相似度": f"{best_similarity:.2f}%"
                                 }
                                 final_results[image_file] = label_info
                                 # 更新規則標誌
@@ -689,73 +710,67 @@ with tab1:
                         final_results[image_file] = None
                 else:
                     final_results[image_file] = None  # 非特殊圖像暫時不分配
-    
+
             # 獲取所有非特殊的圖像
             non_special_images = [
                 img_data for img_data in folder_features 
                 if not img_data["special_angles"]
             ]
-    
+
             if not special_mappings:
                 non_special_images = folder_features  # 如果沒有特殊映射，所有圖像都是非特殊的
-    
+
             image_similarity_store = {}
-    
-            # 定義函數檢查角度是否被禁止
-            def is_banned_angle(item_angle, rule_flags):
-                for idx, rule in enumerate(angle_banning_rules):
-                    if rule_flags[idx]:
-                        if rule["banned_angle_logic"] == "等於":
-                            if item_angle == rule["banned_angle"]:
-                                return True
-                        elif rule["banned_angle_logic"] == "包含":
-                            if rule["banned_angle"] in item_angle:
-                                return True
-                return False
-    
-            # 計算非特殊圖像與標籤的相似度
+
+            # 準備特徵數據
+            labeled_features = filtered_by_category
+            feature_array = np.array([item["features"] for item in labeled_features], dtype=np.float32)
+            # L2 正規化
+            feature_array = l2_normalize(feature_array)
+            labels = [item["labels"] for item in labeled_features]
+            # 建立 Faiss 索引（內積）
+            index = faiss.IndexFlatIP(feature_array.shape[1])
+            index.add(feature_array)
+
+            # 對非特殊圖像進行相似度計算
             for img_data in non_special_images:
                 image_file = img_data["image_file"]
                 if final_results.get(image_file) is not None:
                     continue
-    
-                img_features = img_data["features"]
+
+                img_features = img_data["features"].astype(np.float32).reshape(1, -1)
+                # L2 正規化
+                img_features = l2_normalize(img_features)
+                similarities, indices = index.search(img_features, k=len(labels))
+                similarities = similarities.flatten()
+                # 將相似度轉換為百分比格式（0% 到 100%）
+                similarity_percentages = (similarities * 100).clip(0, 100)
                 image_similarity_list = []
-                for item in filtered_by_category:
-                    item_angle = item["labels"]["angle"]
-    
+                for idx, similarity_percentage in zip(indices[0], similarity_percentages):
+                    label = labels[idx]
+                    item_angle = label["angle"]
                     if is_banned_angle(item_angle, rule_flags):
                         continue
-    
-                    item_features = item["features"]
-                    similarity = cosine_similarity(
-                        img_features, item_features
-                    )
-    
                     image_similarity_list.append({
                         "image_file": image_file,
-                        "similarity": similarity,
-                        "label": item["labels"],
+                        "similarity": similarity_percentage,
+                        "label": label,
                         "folder": folder
                     })
-    
-                # 根據相似度排序
-                image_similarity_list.sort(
-                    key=lambda x: x["similarity"], reverse=True
-                )
+                # 去除重複角度
                 unique_labels = []
+                seen_angles = set()
                 for candidate in image_similarity_list:
-                    if candidate["label"]["angle"] not in [
-                        label["label"]["angle"] for label in unique_labels
-                    ]:
+                    angle = candidate["label"]["angle"]
+                    if angle not in seen_angles:
                         unique_labels.append(candidate)
+                        seen_angles.add(angle)
                     if len(unique_labels) == label_limit:
                         break
-    
                 image_similarity_store[image_file] = unique_labels
-    
+
             unassigned_images = set(image_similarity_store.keys())  # 未分配的圖像集合
-    
+
             # 進行角度分配，直到所有未分配的圖像都處理完
             while unassigned_images:
                 angle_to_images = {}
@@ -766,7 +781,7 @@ with tab1:
                     candidate = None
                     for candidate_candidate in similarity_list:
                         candidate_angle = candidate_candidate["label"]["angle"]
-    
+
                         if is_banned_angle(candidate_angle, rule_flags):
                             continue
                         
@@ -795,7 +810,7 @@ with tab1:
                                 "商品分類": candidate["label"]["category"],
                                 "角度": angle,
                                 "編號": candidate["label"]["number"],
-                                "最大相似度": f"{candidate['similarity'] * 100:.2f}%"
+                                "最大相似度": f"{candidate['similarity']:.2f}%"
                             }
                             assigned_in_this_round.add(image_file)
                     elif len(images) == 1:
@@ -807,12 +822,12 @@ with tab1:
                             "商品分類": candidate["label"]["category"],
                             "角度": angle,
                             "編號": candidate["label"]["number"],
-                            "最大相似度": f"{candidate['similarity'] * 100:.2f}%"
+                            "最大相似度": f"{candidate['similarity']:.2f}%"
                         }
                         used_angles.add(angle)  # 標記角度為已使用
                         assigned_in_this_round.add(image_file)
                     else:
-                        max_similarity = -1
+                        max_similarity = -np.inf
                         best_image = None
                         for image_file in images:
                             candidate = image_current_choices[image_file]
@@ -826,40 +841,40 @@ with tab1:
                             "商品分類": candidate["label"]["category"],
                             "角度": angle,
                             "編號": candidate["label"]["number"],
-                            "最大相似度": f"{candidate['similarity'] * 100:.2f}%"
+                            "最大相似度": f"{candidate['similarity']:.2f}%"
                         }
                         used_angles.add(angle)  # 標記角度為已使用
                         assigned_in_this_round.add(best_image)
-    
+
                 unassigned_images -= assigned_in_this_round  # 更新未分配的圖像
                 if not assigned_in_this_round:
                     break  # 如果沒有圖像在本輪被分配，則退出循環
-    
+
             # 將最終分配結果添加到結果列表
             for image_file, assignment in final_results.items():
                 if assignment is not None:
                     results.append(assignment)
-    
+
             processed_folders += 1
             progress_bar.progress(processed_folders / total_folders)  # 更新進度條
-    
+
         # 清空進度條和進度文字
         progress_bar.empty()
         progress_text.empty()
-    
+
         # 根據編號重新命名圖像
         results = rename_numbers_in_folder(results)
-    
+
         # 將結果轉換為 DataFrame 並顯示在頁面上
         result_df = pd.DataFrame(results)
         st.dataframe(result_df, hide_index=True, use_container_width=True)
-    
+
         # 將結果 DataFrame 寫入 Excel 檔案
         excel_buffer = BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
             result_df.to_excel(writer, index=False)
         excel_data = excel_buffer.getvalue()
-    
+
         # 重新命名並壓縮資料夾和結果 Excel 檔案
         zip_data = rename_and_zip_folders(results, excel_data, skipped_images)
         
@@ -876,7 +891,8 @@ with tab1:
             on_click=reset_file_uploader
         ):
             st.rerun()  # 下載後重新運行應用以重置狀態
-            
+   
+#%% 編圖複檢
 with tab2:
     st.write("\n")
     # 初始化 session_state 的值為字典，以便為每個資料夾記錄確認狀態
