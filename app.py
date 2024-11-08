@@ -16,6 +16,9 @@ from collections import Counter
 import chardet
 import faiss  
 
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+faiss.omp_set_num_threads(1)
+torch.set_num_threads(1)
 # 設定 Streamlit 頁面的標題和圖示
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 
@@ -73,7 +76,7 @@ weights_path = "resnet50.pt"
 
 # 載入 ResNet50 模型
 resnet = models.resnet50()
-resnet.load_state_dict(torch.load(weights_path, map_location=device))
+resnet.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  # 移除最後一層全連接層
 resnet.eval().to(device)
 
