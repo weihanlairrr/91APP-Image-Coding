@@ -10,13 +10,11 @@ from io import BytesIO
 import pickle
 import shutil
 import numpy as np
-from torchvision.models import ResNet50_Weights
 import re
 import tempfile
 from collections import Counter
 import chardet
 from numba import njit
-
 
 # 設定 Streamlit 頁面的標題和圖示
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
@@ -27,10 +25,6 @@ custom_css = """
 div.stTextInput > label {
     display: none;
 }   
-section.stMain {
-    padding-left: 20%; 
-    padding-right: 20%;
-}
 div.block-container {
     padding-top: 3rem;
 }
@@ -74,9 +68,13 @@ st.markdown(custom_css, unsafe_allow_html=True)
 # 設定運行裝置，優先使用 GPU（CUDA），否則使用 CPU
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# 載入預訓練的 ResNet50 模型，並移除最後一層全連接層
-resnet = models.resnet50(weights=ResNet50_Weights.DEFAULT)
-resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  
+# 檢查並下載 ResNet50 預訓練權重
+weights_path = "resnet50.pt"
+
+# 載入 ResNet50 模型
+resnet = models.resnet50()
+resnet.load_state_dict(torch.load(weights_path, map_location=device))
+resnet = torch.nn.Sequential(*list(resnet.children())[:-1])  # 移除最後一層全連接層
 resnet.eval().to(device)
 
 # 定義圖像預處理流程，包括調整大小、中心裁剪、轉換為張量及正規化
