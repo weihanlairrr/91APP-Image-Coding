@@ -20,8 +20,6 @@ import platform
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 faiss.omp_set_num_threads(multiprocessing.cpu_count())
-torch.set_default_dtype(torch.float32)
-np.set_printoptions(precision=8, suppress=True)
 
 # 設定 Streamlit 頁面的標題和圖示
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
@@ -155,7 +153,7 @@ def get_image_features(image, model):
         image: PIL.Image 對象，輸入的圖像
         model: 深度學習模型，用於提取特徵
     回傳:
-        特徵向量（numpy 陣列，float32）
+        特徵向量（numpy 陣列）
     """
     # 根據設備設定運行裝置
     if platform.system() == "Darwin" and torch.backends.mps.is_available():
@@ -167,7 +165,7 @@ def get_image_features(image, model):
 
     image = preprocess(image).unsqueeze(0).to(device)  # 預處理並添加批次維度
     with torch.no_grad():
-        features = model(image).cpu().numpy().astype(np.float32).flatten()  # 強制轉為 float32 並展平
+        features = model(image).cpu().numpy().flatten()  # 提取特徵並展平
     return features
 
 def l2_normalize(vectors):
@@ -178,8 +176,7 @@ def l2_normalize(vectors):
     回傳:
         正規化後的向量
     """
-    vectors = vectors.astype(np.float32)  # 強制轉為 float32
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True).astype(np.float32)
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
     return vectors / norms
 
 def reset_file_uploader():
