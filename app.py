@@ -944,7 +944,7 @@ with tab2:
             top_level_folders = [name for name in os.listdir(tmpdirname) if os.path.isdir(os.path.join(tmpdirname, name))]
             
             if top_level_folders:
-                selected_folder = st.radio("選擇一個資料夾", top_level_folders, horizontal=True, label_visibility="collapsed")
+                selected_folder = st.pills("選擇一個資料夾", top_level_folders, default=top_level_folders[0],label_visibility="collapsed")
                 st.write("\n")
 
                 # 檢查2-IMG是否存在
