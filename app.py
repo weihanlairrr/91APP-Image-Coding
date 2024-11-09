@@ -943,9 +943,16 @@ with tab2:
             
             top_level_folders = [name for name in os.listdir(tmpdirname) if os.path.isdir(os.path.join(tmpdirname, name))]
             
+            if 'previous_selected_folder' not in st.session_state:
+                st.session_state['previous_selected_folder'] = top_level_folders[0] 
+                
             if top_level_folders:
                 selected_folder = st.pills("選擇一個資料夾", top_level_folders, default=top_level_folders[0],label_visibility="collapsed")
                 st.write("\n")
+                if not selected_folder:
+                    selected_folder = st.session_state['previous_selected_folder']
+                else:
+                    st.session_state['previous_selected_folder'] = selected_folder
 
                 # 檢查2-IMG是否存在
                 img_folder_path = os.path.join(tmpdirname, selected_folder, '2-IMG')
