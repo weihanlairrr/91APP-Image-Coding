@@ -345,7 +345,7 @@ def is_banned_angle(item_angle, rule_flags):
                     return True
     return False    
 
-#%% 主函數
+#%% 自動編圖
 
 # 從 pickle 檔案中載入圖像特徵數據，並保存原始資料以供後續重置
 with open(train_file, 'rb') as f:
@@ -362,6 +362,7 @@ tab1, tab2 = st.tabs([" 自動編圖 ", " 編圖複檢 "])
 with tab1:
     st.write("\n")
     # 創建文件上傳器，允許上傳 zip 檔案
+    
     uploaded_zip = st.file_uploader(
         "上傳 Zip 檔案", 
         type=["zip"], 
@@ -988,7 +989,7 @@ with tab2:
                                     image = st.session_state['image_cache'][selected_folder][image_file]
 
                                 # 顯示已緩存的圖片
-                                col.image(image, use_column_width=True)
+                                col.image(image, use_container_width=True)
 
                                 # 取得檔名與副檔名
                                 filename_without_ext = os.path.splitext(image_file)[0]
