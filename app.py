@@ -920,13 +920,13 @@ with tab2:
     if 'filename_changes' not in st.session_state:
         st.session_state['filename_changes'] = {}
     if 'confirmed_changes' not in st.session_state or not isinstance(st.session_state['confirmed_changes'], dict):
-        st.session_state['confirmed_changes'] = {}  # 確保為字典
+        st.session_state['confirmed_changes'] = {}
     if 'image_cache' not in st.session_state:
         st.session_state['image_cache'] = {}
 
     uploaded_file = st.file_uploader(
-        "上傳編圖結果 Zip 檔", 
-        type=["zip"], 
+        "上傳編圖結果 Zip 檔",
+        type=["zip"],
         key='file_uploader_' + str(st.session_state['file_uploader_key2'])
     )
 
@@ -940,21 +940,21 @@ with tab2:
         with tempfile.TemporaryDirectory() as tmpdirname:
             with zipfile.ZipFile(uploaded_file) as zip_ref:
                 zip_ref.extractall(tmpdirname)
-            
-            top_level_folders = [name for name in os.listdir(tmpdirname) if os.path.isdir(os.path.join(tmpdirname, name))]
-            
-            if 'previous_selected_folder' not in st.session_state:
-                st.session_state['previous_selected_folder'] = top_level_folders[0] 
-                
-            if top_level_folders:
-                selected_folder = st.pills("選擇一個資料夾", top_level_folders, default=top_level_folders[0],label_visibility="collapsed")
-                st.write("\n")
-                if not selected_folder:
-                    selected_folder = st.session_state['previous_selected_folder']
-                else:
-                    st.session_state['previous_selected_folder'] = selected_folder
 
-                # 檢查2-IMG是否存在
+            top_level_folders = [name for name in os.listdir(tmpdirname) if os.path.isdir(os.path.join(tmpdirname, name))]
+
+            if 'previous_selected_folder' not in st.session_state:
+                st.session_state['previous_selected_folder'] = top_level_folders[0]
+
+            if top_level_folders:
+                selected_folder = st.pills("選擇一個資料夾", top_level_folders, default=top_level_folders[0], label_visibility="collapsed")
+                st.write("\n")
+
+                # 如果 selected_folder 為 None，則跳過表單顯示
+                if selected_folder is None:
+                    st.stop() 
+
+                # 檢查 2-IMG 是否存在
                 img_folder_path = os.path.join(tmpdirname, selected_folder, '2-IMG')
                 use_full_filename = False
                 if not os.path.exists(img_folder_path):
@@ -967,9 +967,8 @@ with tab2:
                     image_files = sorted(
                         [f for f in os.listdir(img_folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
                     )
-                    
+
                     if image_files:
-                        # 初始化 filename_changes 和 confirmed_changes
                         if selected_folder not in st.session_state['filename_changes']:
                             st.session_state['filename_changes'][selected_folder] = {}
                         if selected_folder not in st.session_state['confirmed_changes']:
@@ -985,9 +984,7 @@ with tab2:
                                     cols = st.columns(6)
                                 col = cols[idx % 6]
 
-                                # 檢查是否已經緩存圖片
                                 if image_file not in st.session_state['image_cache'][selected_folder]:
-                                    # 載入圖片並填充為固定大小顯示框
                                     image_path = os.path.join(img_folder_path, image_file)
                                     image = Image.open(image_path)
                                     image = ImageOps.pad(image, (800, 800), method=Image.Resampling.LANCZOS)
@@ -995,45 +992,35 @@ with tab2:
                                 else:
                                     image = st.session_state['image_cache'][selected_folder][image_file]
 
-                                # 顯示已緩存的圖片
                                 col.image(image, use_container_width=True)
 
-                                # 取得檔名與副檔名
                                 filename_without_ext = os.path.splitext(image_file)[0]
                                 extension = os.path.splitext(image_file)[1]
-                                
-                                # 根據資料夾類型顯示檔名
-                                if use_full_filename:  # 2-IMG資料夾，顯示完整檔名
+
+                                if use_full_filename:
                                     default_text = filename_without_ext + extension
-                                else:  # 1-Main/All資料夾，顯示精簡檔名但保留前綴
+                                else:
                                     last_underscore_index = filename_without_ext.rfind('_')
                                     if last_underscore_index != -1:
-                                        prefix = filename_without_ext[:last_underscore_index+1]
-                                        default_text = filename_without_ext[last_underscore_index+1:]
+                                        prefix = filename_without_ext[:last_underscore_index + 1]
+                                        default_text = filename_without_ext[last_underscore_index + 1:]
                                     else:
                                         prefix = ""
                                         default_text = filename_without_ext
 
-                                # 顯示已修改過的檔名
                                 if image_file in st.session_state['filename_changes'][selected_folder]:
                                     modified_text = st.session_state['filename_changes'][selected_folder][image_file]['text']
                                 else:
                                     modified_text = default_text
 
                                 text_input_key = f"{selected_folder}_{image_file}"
-                                
-                                # 顯示檔名的輸入框
                                 new_text = col.text_input('', value=modified_text, key=text_input_key)
-                                
-                                # 重新組合新的檔名，1-Main/All 加回前綴，2-IMG 顯示原檔名
+
                                 new_filename = new_text if use_full_filename else prefix + new_text + extension
-                                
-                                # 儲存新的檔名和精簡部分
                                 current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
 
                             submitted = st.form_submit_button("確認修改")
                             if submitted:
-                                # 檢查重複檔名
                                 new_filename_list = [v['new_filename'] for v in current_filenames.values()]
                                 duplicates = [filename for filename, count in Counter(new_filename_list).items() if count > 1]
                                 if duplicates:
@@ -1041,12 +1028,10 @@ with tab2:
                                     st.session_state['confirmed_changes'][selected_folder] = False
                                 else:
                                     st.session_state['confirmed_changes'][selected_folder] = True
-                                    # 更新 filename_changes，僅儲存已修改的檔名
                                     st.session_state['filename_changes'][selected_folder] = {
                                         file: data for file, data in current_filenames.items() if data['new_filename'] != file
                                     }
-                            
-                        # 顯示下載按鈕，當至少有一個資料夾確認修改後
+
                         if any(st.session_state['confirmed_changes'].values()):
                             zip_buffer = BytesIO()
                             with zipfile.ZipFile(zip_buffer, 'w') as zipf:
@@ -1057,15 +1042,13 @@ with tab2:
                                             full_path = os.path.join(root, file)
                                             rel_path = os.path.relpath(full_path, tmpdirname)
                                             path_parts = rel_path.split(os.sep)
-                                            # 如果在 filename_changes 中，僅應用已修改的檔名
-                                            if (folder_name in st.session_state['filename_changes'] and 
+                                            if (folder_name in st.session_state['filename_changes'] and
                                                 file in st.session_state['filename_changes'][folder_name]):
                                                 new_filename = st.session_state['filename_changes'][folder_name][file]['new_filename']
                                                 path_parts[-1] = new_filename
                                                 rel_path = os.path.join(*path_parts)
                                             zipf.write(full_path, arcname=rel_path)
                             zip_buffer.seek(0)
-                            st.write("\n")
                             st.download_button(
                                 label='下載修改後的檔案',
                                 data=zip_buffer,
