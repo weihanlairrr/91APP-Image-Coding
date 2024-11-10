@@ -16,7 +16,6 @@ from collections import Counter
 import chardet
 import faiss  
 import multiprocessing
-import platform
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 faiss.omp_set_num_threads(multiprocessing.cpu_count())
@@ -70,13 +69,7 @@ button:hover {
 # 將自定義 CSS 應用到頁面
 st.markdown(custom_css, unsafe_allow_html=True)
 
-# 設定運行裝置，優先使用 MPS（macOS GPU）、CUDA（Linux/Windows GPU），否則使用 CPU
-if platform.system() == "Darwin" and torch.backends.mps.is_available():
-    device = torch.device("mps")
-elif torch.cuda.is_available():
-    device = torch.device("cuda")
-else:
-    device = torch.device("cpu")
+device = "cpu"
 
 # 檢查並下載 ResNet50 預訓練權重
 weights_path = "resnet50.pt"
@@ -85,7 +78,7 @@ weights_path = "resnet50.pt"
 resnet = models.resnet50()
 resnet.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
-resnet.eval().to(device)  # 使用選定的裝置（MPS/CUDA/CPU）
+resnet.eval().to(device) 
 
 # 定義圖像預處理流程，包括調整大小、中心裁剪、轉換為張量及正規化
 preprocess = transforms.Compose([
@@ -155,13 +148,6 @@ def get_image_features(image, model):
     回傳:
         特徵向量（numpy 陣列）
     """
-    # 根據設備設定運行裝置
-    if platform.system() == "Darwin" and torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
 
     image = preprocess(image).unsqueeze(0).to(device)  # 預處理並添加批次維度
     with torch.no_grad():
