@@ -92,11 +92,11 @@ preprocess = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.44, 0.406], 
-        std=[0.229, 0.224, 0.225]
-    ),
 ])
+
+# 手動標準化參數
+mean = [0.485, 0.44, 0.406]
+std = [0.229, 0.224, 0.225]
 
 #%% 檔案與自訂參數
 
@@ -163,9 +163,18 @@ def get_image_features(image, model):
     else:
         device = torch.device("cpu")
 
-    image = preprocess(image).unsqueeze(0).to(device)  # 預處理並添加批次維度
+    image = preprocess(image).unsqueeze(0).to(device)
+    
+    # 手動標準化
+    mean = [0.485, 0.44, 0.406]
+    std = [0.229, 0.224, 0.225]
+    for c in range(3):
+        image[:, c, :, :] = (image[:, c, :, :] - mean[c]) / std[c]
+    
+    # 提取特徵
     with torch.no_grad():
-        features = model(image).cpu().numpy().flatten()  # 提取特徵並展平
+        features = model(image).cpu().numpy().flatten()
+    
     return features
 
 def l2_normalize(vectors):
