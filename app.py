@@ -1053,9 +1053,9 @@ with tab2:
                                             outer_images_to_display.append(image_file)
 
                             # 顯示最外層資料夾圖片的 popover
-                            col1,col2,col3= st.columns([1.3,2.6,1.3],vertical_alignment="center")
+                            col1, col2, col3 = st.columns([1.3, 2.6, 1.12], vertical_alignment="center")
                             if outer_images_to_display:
-                                with col3.popover("查看最外層圖片"):
+                                with col3.popover("查看外層圖片"):
                                     outer_cols = st.columns(6)
                                     for idx, outer_image_file in enumerate(outer_images_to_display):
                                         if idx % 6 == 0 and idx != 0:
@@ -1094,11 +1094,12 @@ with tab2:
                             if submitted:
                                 outer_filenames = []
                                 inner_filenames = []
-
+                                st.session_state['move_out'] = False
                                 for file, data in current_filenames.items():
                                     new_filename = data['new_filename']
                                     if new_filename == '':
                                         outer_filenames.append(file)
+                                        st.session_state['move_out'] = True
                                     else:
                                         inner_filenames.append(new_filename)
 
@@ -1118,8 +1119,9 @@ with tab2:
                                             st.session_state['filename_changes'][selected_folder][file] = data
                                         elif file in st.session_state['filename_changes'][selected_folder]:
                                             del st.session_state['filename_changes'][selected_folder][file]
-
-                                st.rerun()
+                                    
+                                    if st.session_state['move_out'] == True:
+                                        st.rerun()
 
                         if any(st.session_state['confirmed_changes'].values()):
                             zip_buffer = BytesIO()
@@ -1150,7 +1152,8 @@ with tab2:
 
                             zip_buffer.seek(0)
                             st.write("\n")
-                            st.download_button(
+                            colA,colB = st.columns([3.5,1.12])
+                            colB.download_button(
                                 label='下載修改後的檔案',
                                 data=zip_buffer,
                                 file_name=uploaded_file.name,
@@ -1163,3 +1166,4 @@ with tab2:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
+
