@@ -912,6 +912,64 @@ with tab1:
             st.rerun()  # 下載後重新運行應用以重置狀態
    
 #%% 編圖複檢
+def get_outer_folder_images(folder_path):
+    return sorted(
+        [f for f in os.listdir(folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
+    )
+
+def handle_submission(selected_folder, image_files_to_display, use_full_filename):
+    current_filenames = {}
+    for image_file in image_files_to_display:
+        text_input_key = f"{selected_folder}_{image_file}"
+        new_text = st.session_state.get(text_input_key, "")
+
+        filename_without_ext = os.path.splitext(image_file)[0]
+        extension = os.path.splitext(image_file)[1]
+
+        if not use_full_filename:
+            last_underscore_index = filename_without_ext.rfind('_')
+            if last_underscore_index != -1:
+                prefix = filename_without_ext[:last_underscore_index + 1]
+            else:
+                prefix = ""
+        else:
+            prefix = ""
+
+        if new_text.strip() == '':
+            new_filename = ''
+        else:
+            new_filename = new_text if use_full_filename else prefix + new_text + extension
+
+        current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
+
+    outer_filenames = []
+    inner_filenames = []
+    for file, data in current_filenames.items():
+        new_filename = data['new_filename']
+        if new_filename == '':
+            outer_filenames.append(file)
+        else:
+            inner_filenames.append(new_filename)
+
+    duplicates_inner = [filename for filename, count in Counter(inner_filenames).items() if count > 1]
+    duplicates_outer = [filename for filename, count in Counter(outer_filenames).items() if count > 1]
+
+    duplicates = duplicates_inner + duplicates_outer
+
+    if duplicates:
+        st.warning(f"檔名重複: {', '.join(duplicates)}")
+        st.session_state['confirmed_changes'][selected_folder] = False
+    else:
+        st.session_state['confirmed_changes'][selected_folder] = True
+        # 將新的修改合併到現有的 filename_changes 中
+        for file, data in current_filenames.items():
+            if data['new_filename'] != file:
+                if selected_folder not in st.session_state['filename_changes']:
+                    st.session_state['filename_changes'][selected_folder] = {}
+                st.session_state['filename_changes'][selected_folder][file] = data
+            elif file in st.session_state['filename_changes'].get(selected_folder, {}):
+                del st.session_state['filename_changes'][selected_folder][file]
+                
 with tab2:
     st.write("\n")
     if 'file_uploader_key2' not in st.session_state:
@@ -962,17 +1020,10 @@ with tab2:
                 # 檢查最外層資料夾圖片
                 outer_folder_path = os.path.join(tmpdirname, selected_folder)
 
-                def get_outer_folder_images(folder_path):
-                    return sorted(
-                        [f for f in os.listdir(folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
-                    )
-
                 outer_images = get_outer_folder_images(outer_folder_path)
 
                 if os.path.exists(img_folder_path):
-                    image_files = sorted(
-                        [f for f in os.listdir(img_folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
-                    )
+                    image_files = get_outer_folder_images(img_folder_path)
 
                     if image_files:
                         if selected_folder not in st.session_state['filename_changes']:
@@ -996,58 +1047,7 @@ with tab2:
                             image_files_to_display = image_files
 
                         # 定義提交處理函數
-                        def handle_submission(selected_folder, image_files_to_display, use_full_filename):
-                            current_filenames = {}
-                            for image_file in image_files_to_display:
-                                text_input_key = f"{selected_folder}_{image_file}"
-                                new_text = st.session_state.get(text_input_key, "")
-
-                                filename_without_ext = os.path.splitext(image_file)[0]
-                                extension = os.path.splitext(image_file)[1]
-
-                                if not use_full_filename:
-                                    last_underscore_index = filename_without_ext.rfind('_')
-                                    if last_underscore_index != -1:
-                                        prefix = filename_without_ext[:last_underscore_index + 1]
-                                    else:
-                                        prefix = ""
-                                else:
-                                    prefix = ""
-
-                                if new_text.strip() == '':
-                                    new_filename = ''
-                                else:
-                                    new_filename = new_text if use_full_filename else prefix + new_text + extension
-
-                                current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
-
-                            outer_filenames = []
-                            inner_filenames = []
-                            for file, data in current_filenames.items():
-                                new_filename = data['new_filename']
-                                if new_filename == '':
-                                    outer_filenames.append(file)
-                                else:
-                                    inner_filenames.append(new_filename)
-
-                            duplicates_inner = [filename for filename, count in Counter(inner_filenames).items() if count > 1]
-                            duplicates_outer = [filename for filename, count in Counter(outer_filenames).items() if count > 1]
-
-                            duplicates = duplicates_inner + duplicates_outer
-
-                            if duplicates:
-                                st.warning(f"檔名重複: {', '.join(duplicates)}")
-                                st.session_state['confirmed_changes'][selected_folder] = False
-                            else:
-                                st.session_state['confirmed_changes'][selected_folder] = True
-                                # 將新的修改合併到現有的 filename_changes 中
-                                for file, data in current_filenames.items():
-                                    if data['new_filename'] != file:
-                                        if selected_folder not in st.session_state['filename_changes']:
-                                            st.session_state['filename_changes'][selected_folder] = {}
-                                        st.session_state['filename_changes'][selected_folder][file] = data
-                                    elif file in st.session_state['filename_changes'].get(selected_folder, {}):
-                                        del st.session_state['filename_changes'][selected_folder][file]
+                        
 
                         with st.form(f"filename_form_{selected_folder}"):
                             cols = st.columns(6)
