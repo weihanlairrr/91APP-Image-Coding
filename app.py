@@ -1152,8 +1152,7 @@ with tab2:
 
                             zip_buffer.seek(0)
                             st.write("\n")
-                            colA,colB = st.columns([3.5,1.12])
-                            colB.download_button(
+                            st.download_button(
                                 label='下載修改後的檔案',
                                 data=zip_buffer,
                                 file_name=uploaded_file.name,
