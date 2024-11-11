@@ -1023,12 +1023,10 @@ with tab2:
 
                             outer_filenames = []
                             inner_filenames = []
-                            st.session_state['move_out'] = False
                             for file, data in current_filenames.items():
                                 new_filename = data['new_filename']
                                 if new_filename == '':
                                     outer_filenames.append(file)
-                                    st.session_state['move_out'] = True
                                 else:
                                     inner_filenames.append(new_filename)
 
