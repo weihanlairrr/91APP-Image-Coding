@@ -995,9 +995,64 @@ with tab2:
                         else:
                             image_files_to_display = image_files
 
+                        # 定義提交處理函數
+                        def handle_submission(selected_folder, image_files_to_display, use_full_filename):
+                            current_filenames = {}
+                            for image_file in image_files_to_display:
+                                text_input_key = f"{selected_folder}_{image_file}"
+                                new_text = st.session_state.get(text_input_key, "")
+
+                                filename_without_ext = os.path.splitext(image_file)[0]
+                                extension = os.path.splitext(image_file)[1]
+
+                                if not use_full_filename:
+                                    last_underscore_index = filename_without_ext.rfind('_')
+                                    if last_underscore_index != -1:
+                                        prefix = filename_without_ext[:last_underscore_index + 1]
+                                    else:
+                                        prefix = ""
+                                else:
+                                    prefix = ""
+
+                                if new_text.strip() == '':
+                                    new_filename = ''
+                                else:
+                                    new_filename = new_text if use_full_filename else prefix + new_text + extension
+
+                                current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
+
+                            outer_filenames = []
+                            inner_filenames = []
+                            st.session_state['move_out'] = False
+                            for file, data in current_filenames.items():
+                                new_filename = data['new_filename']
+                                if new_filename == '':
+                                    outer_filenames.append(file)
+                                    st.session_state['move_out'] = True
+                                else:
+                                    inner_filenames.append(new_filename)
+
+                            duplicates_inner = [filename for filename, count in Counter(inner_filenames).items() if count > 1]
+                            duplicates_outer = [filename for filename, count in Counter(outer_filenames).items() if count > 1]
+
+                            duplicates = duplicates_inner + duplicates_outer
+
+                            if duplicates:
+                                st.warning(f"檔名重複: {', '.join(duplicates)}")
+                                st.session_state['confirmed_changes'][selected_folder] = False
+                            else:
+                                st.session_state['confirmed_changes'][selected_folder] = True
+                                # 將新的修改合併到現有的 filename_changes 中
+                                for file, data in current_filenames.items():
+                                    if data['new_filename'] != file:
+                                        if selected_folder not in st.session_state['filename_changes']:
+                                            st.session_state['filename_changes'][selected_folder] = {}
+                                        st.session_state['filename_changes'][selected_folder][file] = data
+                                    elif file in st.session_state['filename_changes'].get(selected_folder, {}):
+                                        del st.session_state['filename_changes'][selected_folder][file]
+
                         with st.form(f"filename_form_{selected_folder}"):
                             cols = st.columns(6)
-                            current_filenames = {}
                             for idx, image_file in enumerate(image_files_to_display):
                                 if idx % 6 == 0 and idx != 0:
                                     cols = st.columns(6)
@@ -1027,20 +1082,14 @@ with tab2:
                                         prefix = ""
                                         default_text = filename_without_ext
 
-                                if image_file in st.session_state['filename_changes'][selected_folder]:
+                                if (selected_folder in st.session_state['filename_changes'] and
+                                    image_file in st.session_state['filename_changes'][selected_folder]):
                                     modified_text = st.session_state['filename_changes'][selected_folder][image_file]['text']
                                 else:
                                     modified_text = default_text
 
                                 text_input_key = f"{selected_folder}_{image_file}"
-                                new_text = col.text_input('', value=modified_text, key=text_input_key)
-
-                                if new_text.strip() == '':
-                                    new_filename = ''
-                                else:
-                                    new_filename = new_text if use_full_filename else prefix + new_text + extension
-
-                                current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
+                                col.text_input('', value=modified_text, key=text_input_key)
 
                             # 準備要顯示的最外層圖片
                             outer_images_to_display = outer_images.copy()
@@ -1090,38 +1139,11 @@ with tab2:
 
                                         col.write(f"{filename_display}")
 
-                            submitted = col1.form_submit_button("確認修改")
-                            if submitted:
-                                outer_filenames = []
-                                inner_filenames = []
-                                st.session_state['move_out'] = False
-                                for file, data in current_filenames.items():
-                                    new_filename = data['new_filename']
-                                    if new_filename == '':
-                                        outer_filenames.append(file)
-                                        st.session_state['move_out'] = True
-                                    else:
-                                        inner_filenames.append(new_filename)
-
-                                duplicates_inner = [filename for filename, count in Counter(inner_filenames).items() if count > 1]
-                                duplicates_outer = [filename for filename, count in Counter(outer_filenames).items() if count > 1]
-
-                                duplicates = duplicates_inner + duplicates_outer
-
-                                if duplicates:
-                                    st.warning(f"檔名重複: {', '.join(duplicates)}")
-                                    st.session_state['confirmed_changes'][selected_folder] = False
-                                else:
-                                    st.session_state['confirmed_changes'][selected_folder] = True
-                                    # 將新的修改合併到現有的 filename_changes 中
-                                    for file, data in current_filenames.items():
-                                        if data['new_filename'] != file:
-                                            st.session_state['filename_changes'][selected_folder][file] = data
-                                        elif file in st.session_state['filename_changes'][selected_folder]:
-                                            del st.session_state['filename_changes'][selected_folder][file]
-                                    
-                                    if st.session_state['move_out'] == True:
-                                        st.rerun()
+                            col1.form_submit_button(
+                                "確認修改",
+                                on_click=handle_submission,
+                                args=(selected_folder, image_files_to_display, use_full_filename)
+                            )
 
                         if any(st.session_state['confirmed_changes'].values()):
                             zip_buffer = BytesIO()
@@ -1165,4 +1187,3 @@ with tab2:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
-
