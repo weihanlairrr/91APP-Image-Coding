@@ -16,6 +16,7 @@ from collections import Counter
 import chardet
 import faiss  
 import multiprocessing
+import platform
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 faiss.omp_set_num_threads(multiprocessing.cpu_count())
@@ -69,7 +70,13 @@ button:hover {
 # 將自定義 CSS 應用到頁面
 st.markdown(custom_css, unsafe_allow_html=True)
 
-device = "cpu"
+# 設定運行裝置，優先使用 MPS（macOS GPU）、CUDA（Linux/Windows GPU），否則使用 CPU
+if platform.system() == "Darwin" and torch.backends.mps.is_available():
+    device = torch.device("mps")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
 
 # 檢查並下載 ResNet50 預訓練權重
 weights_path = "resnet50.pt"
@@ -78,7 +85,7 @@ weights_path = "resnet50.pt"
 resnet = models.resnet50()
 resnet.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
-resnet.eval().to(device) 
+resnet.eval().to(device)  # 使用選定的裝置（MPS/CUDA/CPU）
 
 # 定義圖像預處理流程，包括調整大小、中心裁剪、轉換為張量及正規化
 preprocess = transforms.Compose([
@@ -148,6 +155,13 @@ def get_image_features(image, model):
     回傳:
         特徵向量（numpy 陣列）
     """
+    # 根據設備設定運行裝置
+    if platform.system() == "Darwin" and torch.backends.mps.is_available():
+        device = torch.device("mps")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
 
     image = preprocess(image).unsqueeze(0).to(device)  # 預處理並添加批次維度
     with torch.no_grad():
@@ -900,7 +914,6 @@ with tab1:
 #%% 編圖複檢
 with tab2:
     st.write("\n")
-    # 初始化 session_state 的值為字典，以便為每個資料夾記錄確認狀態
     if 'file_uploader_key2' not in st.session_state:
         st.session_state['file_uploader_key2'] = 4
     if 'filename_changes' not in st.session_state:
@@ -916,7 +929,6 @@ with tab2:
         key='file_uploader_' + str(st.session_state['file_uploader_key2'])
     )
 
-    # 當上傳檔案被移除時重設狀態
     if uploaded_file is None:
         st.session_state['filename_changes'] = {}
         st.session_state['confirmed_changes'] = {}
@@ -936,11 +948,9 @@ with tab2:
                 selected_folder = st.pills("選擇一個資料夾", top_level_folders, default=top_level_folders[0], label_visibility="collapsed")
                 st.write("\n")
 
-                # 如果 selected_folder 為 None，則跳過表單顯示
                 if selected_folder is None:
-                    st.stop() 
+                    st.stop()
 
-                # 檢查 2-IMG 是否存在
                 img_folder_path = os.path.join(tmpdirname, selected_folder, '2-IMG')
                 use_full_filename = False
                 if not os.path.exists(img_folder_path):
@@ -948,6 +958,16 @@ with tab2:
                     use_full_filename = False
                 else:
                     use_full_filename = True
+
+                # 檢查最外層資料夾圖片
+                outer_folder_path = os.path.join(tmpdirname, selected_folder)
+
+                def get_outer_folder_images(folder_path):
+                    return sorted(
+                        [f for f in os.listdir(folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
+                    )
+
+                outer_images = get_outer_folder_images(outer_folder_path)
 
                 if os.path.exists(img_folder_path):
                     image_files = sorted(
@@ -962,21 +982,34 @@ with tab2:
                         if selected_folder not in st.session_state['image_cache']:
                             st.session_state['image_cache'][selected_folder] = {}
 
+                        # 根據確認狀態調整主圖片顯示區
+                        if st.session_state['confirmed_changes'].get(selected_folder, False):
+                            image_files_to_display = []
+                            for image_file in image_files:
+                                if (selected_folder in st.session_state['filename_changes'] and
+                                    image_file in st.session_state['filename_changes'][selected_folder] and
+                                    st.session_state['filename_changes'][selected_folder][image_file]['new_filename'] == ''):
+                                    continue  # 不顯示文件名為空的圖片
+                                else:
+                                    image_files_to_display.append(image_file)
+                        else:
+                            image_files_to_display = image_files
+
                         with st.form(f"filename_form_{selected_folder}"):
                             cols = st.columns(6)
                             current_filenames = {}
-                            for idx, image_file in enumerate(image_files):
+                            for idx, image_file in enumerate(image_files_to_display):
                                 if idx % 6 == 0 and idx != 0:
                                     cols = st.columns(6)
                                 col = cols[idx % 6]
 
-                                if image_file not in st.session_state['image_cache'][selected_folder]:
-                                    image_path = os.path.join(img_folder_path, image_file)
+                                image_path = os.path.join(img_folder_path, image_file)
+                                if image_path not in st.session_state['image_cache'][selected_folder]:
                                     image = Image.open(image_path)
                                     image = ImageOps.pad(image, (800, 800), method=Image.Resampling.LANCZOS)
-                                    st.session_state['image_cache'][selected_folder][image_file] = image
+                                    st.session_state['image_cache'][selected_folder][image_path] = image
                                 else:
-                                    image = st.session_state['image_cache'][selected_folder][image_file]
+                                    image = st.session_state['image_cache'][selected_folder][image_path]
 
                                 col.image(image, use_container_width=True)
 
@@ -1002,21 +1035,91 @@ with tab2:
                                 text_input_key = f"{selected_folder}_{image_file}"
                                 new_text = col.text_input('', value=modified_text, key=text_input_key)
 
-                                new_filename = new_text if use_full_filename else prefix + new_text + extension
+                                if new_text.strip() == '':
+                                    new_filename = ''
+                                else:
+                                    new_filename = new_text if use_full_filename else prefix + new_text + extension
+
                                 current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
 
-                            submitted = st.form_submit_button("確認修改")
+                            # 準備要顯示的最外層圖片
+                            outer_images_to_display = outer_images.copy()
+                            if st.session_state['confirmed_changes'].get(selected_folder, False):
+                                for image_file in image_files:
+                                    if (selected_folder in st.session_state['filename_changes'] and
+                                        image_file in st.session_state['filename_changes'][selected_folder] and
+                                        st.session_state['filename_changes'][selected_folder][image_file]['new_filename'] == ''):
+                                        if image_file not in outer_images_to_display:
+                                            outer_images_to_display.append(image_file)
+
+                            # 顯示最外層資料夾圖片的 popover
+                            col1,col2,col3= st.columns([1.3,2.6,1.3],vertical_alignment="center")
+                            if outer_images_to_display:
+                                with col3.popover("查看最外層圖片"):
+                                    outer_cols = st.columns(6)
+                                    for idx, outer_image_file in enumerate(outer_images_to_display):
+                                        if idx % 6 == 0 and idx != 0:
+                                            outer_cols = st.columns(6)
+                                        col = outer_cols[idx % 6]
+
+                                        # 確定圖片路徑
+                                        if outer_image_file in outer_images:
+                                            outer_image_path = os.path.join(outer_folder_path, outer_image_file)
+                                        else:
+                                            outer_image_path = os.path.join(img_folder_path, outer_image_file)
+
+                                        if outer_image_path not in st.session_state['image_cache'][selected_folder]:
+                                            outer_image = Image.open(outer_image_path)
+                                            outer_image = ImageOps.pad(outer_image, (800, 800), method=Image.Resampling.LANCZOS)
+                                            st.session_state['image_cache'][selected_folder][outer_image_path] = outer_image
+                                        else:
+                                            outer_image = st.session_state['image_cache'][selected_folder][outer_image_path]
+
+                                        col.image(outer_image, use_container_width=True)
+                                        filename_without_ext = os.path.splitext(outer_image_file)[0]
+                                        extension = os.path.splitext(outer_image_file)[1]
+
+                                        if use_full_filename:
+                                            filename_display = filename_without_ext + extension
+                                        else:
+                                            last_underscore_index = filename_without_ext.rfind('_')
+                                            if last_underscore_index != -1:
+                                                filename_display = filename_without_ext[last_underscore_index + 1:] + extension
+                                            else:
+                                                filename_display = filename_without_ext + extension
+
+                                        col.write(f"{filename_display}")
+
+                            submitted = col1.form_submit_button("確認修改")
                             if submitted:
-                                new_filename_list = [v['new_filename'] for v in current_filenames.values()]
-                                duplicates = [filename for filename, count in Counter(new_filename_list).items() if count > 1]
+                                outer_filenames = []
+                                inner_filenames = []
+
+                                for file, data in current_filenames.items():
+                                    new_filename = data['new_filename']
+                                    if new_filename == '':
+                                        outer_filenames.append(file)
+                                    else:
+                                        inner_filenames.append(new_filename)
+
+                                duplicates_inner = [filename for filename, count in Counter(inner_filenames).items() if count > 1]
+                                duplicates_outer = [filename for filename, count in Counter(outer_filenames).items() if count > 1]
+
+                                duplicates = duplicates_inner + duplicates_outer
+
                                 if duplicates:
                                     st.warning(f"檔名重複: {', '.join(duplicates)}")
                                     st.session_state['confirmed_changes'][selected_folder] = False
                                 else:
                                     st.session_state['confirmed_changes'][selected_folder] = True
-                                    st.session_state['filename_changes'][selected_folder] = {
-                                        file: data for file, data in current_filenames.items() if data['new_filename'] != file
-                                    }
+                                    # 將新的修改合併到現有的 filename_changes 中
+                                    for file, data in current_filenames.items():
+                                        if data['new_filename'] != file:
+                                            st.session_state['filename_changes'][selected_folder][file] = data
+                                        elif file in st.session_state['filename_changes'][selected_folder]:
+                                            del st.session_state['filename_changes'][selected_folder][file]
+
+                                st.rerun()
 
                         if any(st.session_state['confirmed_changes'].values()):
                             zip_buffer = BytesIO()
@@ -1028,13 +1131,25 @@ with tab2:
                                             full_path = os.path.join(root, file)
                                             rel_path = os.path.relpath(full_path, tmpdirname)
                                             path_parts = rel_path.split(os.sep)
+
                                             if (folder_name in st.session_state['filename_changes'] and
                                                 file in st.session_state['filename_changes'][folder_name]):
-                                                new_filename = st.session_state['filename_changes'][folder_name][file]['new_filename']
-                                                path_parts[-1] = new_filename
-                                                rel_path = os.path.join(*path_parts)
-                                            zipf.write(full_path, arcname=rel_path)
+
+                                                new_filename_data = st.session_state['filename_changes'][folder_name][file]
+                                                new_filename = new_filename_data['new_filename']
+
+                                                if new_filename.strip() == "":
+                                                    new_rel_path = os.path.join(folder_name, file)
+                                                else:
+                                                    path_parts[-1] = new_filename
+                                                    new_rel_path = os.path.join(*path_parts)
+
+                                                zipf.write(full_path, arcname=new_rel_path)
+                                            else:
+                                                zipf.write(full_path, arcname=rel_path)
+
                             zip_buffer.seek(0)
+                            st.write("\n")
                             st.download_button(
                                 label='下載修改後的檔案',
                                 data=zip_buffer,
@@ -1047,4 +1162,4 @@ with tab2:
                 else:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
-                st.error("壓縮檔案中未找到任何資料夾。")
+                st.error("未找到任何資料夾。")
