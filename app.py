@@ -1059,21 +1059,26 @@ with tab2:
                         if selected_folder not in st.session_state['image_cache']:
                             st.session_state['image_cache'][selected_folder] = {}
 
-                        # 根據確認狀態調整主圖片顯示區
                         if st.session_state['confirmed_changes'].get(selected_folder, False):
+                            # 更新顯示圖片的列表
                             image_files_to_display = []
                             for image_file in image_files:
                                 if (selected_folder in st.session_state['filename_changes'] and
                                     image_file in st.session_state['filename_changes'][selected_folder] and
                                     st.session_state['filename_changes'][selected_folder][image_file]['new_filename'] == ''):
-                                    continue  # 不顯示文件名為空的圖片
+                                    continue  # 不顯示檔名為空的圖片
                                 else:
                                     image_files_to_display.append(image_file)
                         else:
                             image_files_to_display = image_files
-
-                        # 定義提交處理函數
                         
+                        # 依照最新檔名排序圖片
+                        image_files_to_display.sort(key=lambda x: (
+                            st.session_state['filename_changes'][selected_folder][x]['new_filename']
+                            if x in st.session_state['filename_changes'][selected_folder]
+                            else x
+                        ))
+
 
                         with st.form(f"filename_form_{selected_folder}"):
                             cols = st.columns(6)
