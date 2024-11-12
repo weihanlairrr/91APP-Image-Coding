@@ -1185,6 +1185,15 @@ with tab2:
                         if any(st.session_state['confirmed_changes'].values()):
                             zip_buffer = BytesIO()
                             with zipfile.ZipFile(zip_buffer, 'w') as zipf:
+                                # 找出頂層的非資料夾檔案
+                                top_level_files = [name for name in os.listdir(tmpdirname) if os.path.isfile(os.path.join(tmpdirname, name))]
+                                
+                                # 先將頂層的非資料夾檔案加入 zip
+                                for file_name in top_level_files:
+                                    file_path = os.path.join(tmpdirname, file_name)
+                                    zipf.write(file_path, arcname=file_name)
+                        
+                                # 再處理各個資料夾中的檔案
                                 for folder_name in top_level_folders:
                                     folder_path = os.path.join(tmpdirname, folder_name)
                                     for root, dirs, files in os.walk(folder_path):
@@ -1192,23 +1201,22 @@ with tab2:
                                             full_path = os.path.join(root, file)
                                             rel_path = os.path.relpath(full_path, tmpdirname)
                                             path_parts = rel_path.split(os.sep)
-
+                        
                                             if (folder_name in st.session_state['filename_changes'] and
                                                 file in st.session_state['filename_changes'][folder_name]):
-
                                                 new_filename_data = st.session_state['filename_changes'][folder_name][file]
                                                 new_filename = new_filename_data['new_filename']
-
+                        
                                                 if new_filename.strip() == "":
                                                     new_rel_path = os.path.join(folder_name, file)
                                                 else:
                                                     path_parts[-1] = new_filename
                                                     new_rel_path = os.path.join(*path_parts)
-
+                        
                                                 zipf.write(full_path, arcname=new_rel_path)
                                             else:
                                                 zipf.write(full_path, arcname=rel_path)
-
+                        
                             zip_buffer.seek(0)
                             st.write("\n")
                             st.download_button(
