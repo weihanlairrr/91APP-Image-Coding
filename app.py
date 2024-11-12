@@ -943,6 +943,9 @@ def get_outer_folder_images(folder_path):
         [f for f in os.listdir(folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
     )
 
+def reset_duplicates_flag():
+    st.session_state['has_duplicates'] = False
+    
 def handle_submission(selected_folder, image_files_to_display, use_full_filename):
     current_filenames = {}
     for image_file in image_files_to_display:
@@ -983,11 +986,14 @@ def handle_submission(selected_folder, image_files_to_display, use_full_filename
     duplicates = duplicates_inner + duplicates_outer
 
     if duplicates:
-        st.warning(f"檔名重複: {', '.join(duplicates)}")
+        st.session_state['has_duplicates'] = True
+        st.session_state['duplicate_filenames'] = duplicates
         st.session_state['confirmed_changes'][selected_folder] = False
     else:
+        st.session_state['has_duplicates'] = False
         st.session_state['confirmed_changes'][selected_folder] = True
-        # 將新的修改合併到現有的 filename_changes 中
+
+        # 更新檔名修改記錄
         for file, data in current_filenames.items():
             if data['new_filename'] != file:
                 if selected_folder not in st.session_state['filename_changes']:
@@ -1029,7 +1035,7 @@ with tab2:
                 st.session_state['previous_selected_folder'] = top_level_folders[0]
 
             if top_level_folders:
-                selected_folder = st.pills("選擇一個資料夾", top_level_folders, default=top_level_folders[0], label_visibility="collapsed")
+                selected_folder = st.pills("選擇一個資料夾", top_level_folders, default=top_level_folders[0], label_visibility="collapsed",on_change=reset_duplicates_flag)
                 st.write("\n")
 
                 if selected_folder is None:
@@ -1131,9 +1137,9 @@ with tab2:
                                             outer_images_to_display.append(image_file)
 
                             # 顯示最外層資料夾圖片的 popover
-                            col1, col2, col3 = st.columns([1.3, 2.6, 1.12], vertical_alignment="center")
+                            col1, col2, col3 ,col4= st.columns([1.1,1.7,1, 1.12], vertical_alignment="center")
                             if outer_images_to_display:
-                                with col3.popover("查看外層圖片"):
+                                with col4.popover("查看外層圖片"):
                                     outer_cols = st.columns(6)
                                     for idx, outer_image_file in enumerate(outer_images_to_display):
                                         if idx % 6 == 0 and idx != 0:
@@ -1167,13 +1173,15 @@ with tab2:
                                                 filename_display = filename_without_ext + extension
 
                                         col.write(f"{filename_display}")
-
+                            
                             col1.form_submit_button(
                                 "確認修改",
                                 on_click=handle_submission,
                                 args=(selected_folder, image_files_to_display, use_full_filename)
                             )
-
+                            if st.session_state.get('has_duplicates') == True:
+                                col2.warning(f"檔名重複: {', '.join(st.session_state['duplicate_filenames'])}")
+    
                         if any(st.session_state['confirmed_changes'].values()):
                             zip_buffer = BytesIO()
                             with zipfile.ZipFile(zip_buffer, 'w') as zipf:
