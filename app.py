@@ -888,10 +888,35 @@ with tab1:
         result_df = pd.DataFrame(results)
         st.dataframe(result_df, hide_index=True, use_container_width=True)
 
-        # 將結果 DataFrame 寫入 Excel 檔案
+        # 創建 '編圖張數與廣告圖' 的資料
+        folder_data = []
+        for folder in image_folders:
+            folder_results = result_df[result_df['資料夾'] == folder]
+            valid_images = folder_results[
+                (folder_results['編號'] != '超過上限') & (~folder_results['編號'].isna())
+            ]
+            num_images = len(valid_images)
+            # ADS廣告圖
+            if selected_brand == "ADS":
+                ad_images = valid_images[valid_images['角度'].str.contains('情境|HM')]
+                num_ad_images = len(ad_images)
+                if num_ad_images > 0:
+                    ad_image_value = num_ad_images + 1
+                else:
+                    ad_image_value = 1
+            else:
+                # 其他品牌廣告圖欄位
+                ad_image_value = ""
+                
+            folder_data.append({'資料夾': folder, '張數': num_images, '廣告圖': ad_image_value})
+
+        folder_df = pd.DataFrame(folder_data)
+
+        # 將結果 DataFrame 和 '編圖張數與廣告圖' 寫入 Excel 檔案
         excel_buffer = BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-            result_df.to_excel(writer, index=False)
+            result_df.to_excel(writer, sheet_name='編圖結果', index=False)
+            folder_df.to_excel(writer, sheet_name='編圖張數與廣告圖', index=False)
         excel_data = excel_buffer.getvalue()
 
         # 重新命名並壓縮資料夾和結果 Excel 檔案
@@ -910,6 +935,7 @@ with tab1:
             on_click=reset_file_uploader
         ):
             st.rerun()  # 下載後重新運行應用以重置狀態
+
    
 #%% 編圖複檢
 def get_outer_folder_images(folder_path):
