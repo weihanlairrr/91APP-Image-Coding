@@ -1143,7 +1143,37 @@ with tab2:
                 st.session_state['previous_selected_folder'] = top_level_folders[0]
 
             if top_level_folders:
-                selected_folder = st.pills("選擇一個資料夾", top_level_folders, default=top_level_folders[0], label_visibility="collapsed", on_change=reset_duplicates_flag)
+                if 'previous_selected_folder' not in st.session_state:
+                    st.session_state['previous_selected_folder'] = None
+                
+                if 'last_text_inputs' not in st.session_state:
+                    st.session_state['last_text_inputs'] = {}
+                
+                previous_folder = st.session_state['previous_selected_folder']
+                selected_folder = st.pills(
+                    "選擇一個資料夾",
+                    top_level_folders,
+                    default=top_level_folders[0],
+                    label_visibility="collapsed",
+                    on_change=reset_duplicates_flag
+                )
+                
+                # 當 `selected_folder` 變成 `None` 時，保存目前的 text_input 值
+                if selected_folder is None and previous_folder is not None:
+                    st.session_state['last_text_inputs'][previous_folder] = {
+                        key: st.session_state[key]
+                        for key in st.session_state if key.startswith(f"{previous_folder}_")
+                    }
+                
+                # 從 `None` 切回之前的資料夾時，恢復 text_input 值
+                if selected_folder is not None and previous_folder is None:
+                    if selected_folder in st.session_state['last_text_inputs']:
+                        for key, value in st.session_state['last_text_inputs'][selected_folder].items():
+                            st.session_state[key] = value
+                
+                # 更新 previous_selected_folder
+                st.session_state['previous_selected_folder'] = selected_folder
+
                 st.write("\n")
 
                 if selected_folder is None:
@@ -1422,3 +1452,4 @@ with tab2:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
+
