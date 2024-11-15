@@ -963,18 +963,6 @@ def get_outer_folder_images(folder_path):
         [f for f in os.listdir(folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
     )
 
-def get_sort_key(image_file):
-    if selected_folder in st.session_state['filename_changes'] and image_file in st.session_state['filename_changes'][selected_folder]:
-        data = st.session_state['filename_changes'][selected_folder][image_file]
-        new_filename = data['new_filename']
-        if new_filename != '':
-            return new_filename
-        else:
-            # 使用最近非空檔名排序
-            return data.get('last_non_empty', image_file)
-    else:
-        return image_file
-    
 def get_prefix(image_files):
     for image_file in image_files:
         filename_without_ext = os.path.splitext(image_file)[0]
@@ -1256,6 +1244,19 @@ with tab2:
                                     image_files_to_display.append(image_file)
                                 else:
                                     outer_images_to_display_updated.append(image_file)
+
+                        # 根據新檔名排序圖片
+                        def get_sort_key(image_file):
+                            if selected_folder in st.session_state['filename_changes'] and image_file in st.session_state['filename_changes'][selected_folder]:
+                                data = st.session_state['filename_changes'][selected_folder][image_file]
+                                new_filename = data['new_filename']
+                                if new_filename != '':
+                                    return new_filename
+                                else:
+                                    # 使用最近非空檔名排序
+                                    return data.get('last_non_empty', image_file)
+                            else:
+                                return image_file
 
                         image_files_to_display.sort(key=get_sort_key)
                         outer_images_to_display_updated.sort(key=get_sort_key)
