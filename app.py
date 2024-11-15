@@ -69,6 +69,47 @@ button:hover {
 st.markdown(custom_css, unsafe_allow_html=True)
 
 #%% function
+@st.cache_resource
+def load_resnet_model():
+    """
+    懶加載 ResNet 模型，並移除最後一層。
+    """
+    device = torch.device("cpu")
+    weights_path = "dependencies/resnet50.pt"
+    resnet = models.resnet50()
+    resnet.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
+    resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
+    resnet.eval().to(device)
+    return resnet
+
+@st.cache_resource
+def get_preprocess_transforms():
+    """
+    定義圖像預處理流程，包括調整大小、中心裁剪、轉換為張量及正規化。
+    """
+    return transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.44, 0.406],
+            std=[0.2, 0.2, 0.2]
+        ),
+    ])
+
+@st.cache_resource
+def load_image_features(train_file_path):
+    """
+    懶加載 .pkl 檔案，並返回特徵資料。
+    參數:
+        train_file_path: .pkl 檔案的路徑
+    回傳:
+        特徵資料字典
+    """
+    with open(train_file_path, 'rb') as f:
+        features_by_category = pickle.load(f)
+    return features_by_category
+
 def initialize_session_state():
     """
     初始化所有 session_state 變數。
@@ -310,38 +351,20 @@ def generate_image_type_statistics(results):
     return pd.DataFrame(statistics)
 
 #%% 自動編圖介面
-
-device = torch.device("cpu")
-weights_path = "dependencies/resnet50.pt"
-
-# 載入 ResNet50 模型並移除最後一層
-resnet = models.resnet50()
-resnet.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
-resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
-resnet.eval().to(device)  # 使用選定的裝置（MPS/CUDA/CPU）
-
-# 定義圖像預處理流程，包括調整大小、中心裁剪、轉換為張量及正規化
-preprocess = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.44, 0.406], 
-        std=[0.2, 0.2, 0.2]
-    ),
-])
-
-brand_dependencies = {
-    "ADS": {
-        "train_file": "dependencies/image_features.pkl",
-        "angle_filename_reference": "dependencies/ADS檔名角度對照表.xlsx",
-        "label_limit": 10,
-        "main_folder_structure": "1-Main/All"
-    },
-}
-
 tab1, tab2 = st.tabs([" 自動編圖 ", " 編圖複檢 "])
 with tab1:
+    resnet = load_resnet_model()
+    preprocess = get_preprocess_transforms()
+
+    brand_dependencies = {
+        "ADS": {
+            "train_file": "dependencies/image_features.pkl",
+            "angle_filename_reference": "dependencies/ADS檔名角度對照表.xlsx",
+            "label_limit": 10,
+            "main_folder_structure": "1-Main/All"
+        },
+    }
+    
     initialize_session_state() 
     brand_list = list(brand_dependencies.keys())
     st.write("\n")
@@ -382,9 +405,9 @@ with tab1:
         category_rules_df = pd.read_excel(angle_filename_reference, sheet_name='商品分類及關鍵字條件', usecols=[0, 1, 2])
         category_rules = {row.iloc[0]: {"keywords": row.iloc[1].split(','), "match_all": row.iloc[2]} for _, row in category_rules_df.iterrows()}
         
-        with open(train_file, 'rb') as f:
-            features_by_category = pickle.load(f)
-            original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
+        features_by_category = load_image_features(train_file)
+        # 複製一份原始特徵資料，避免在處理時修改到原始資料
+        original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
 
     if uploaded_zip and start_running:
         selectbox_placeholder.empty()
@@ -948,8 +971,21 @@ def get_prefix(image_files):
             return filename_without_ext[:last_underscore_index + 1]
     return ""
 
+def get_sort_key(image_file):
+    if selected_folder in st.session_state['filename_changes'] and image_file in st.session_state['filename_changes'][selected_folder]:
+        data = st.session_state['filename_changes'][selected_folder][image_file]
+        new_filename = data['new_filename']
+        if new_filename != '':
+            return new_filename
+        else:
+            # 使用最近非空檔名排序
+            return data.get('last_non_empty', image_file)
+    else:
+        return image_file
+
 def reset_duplicates_flag():
     st.session_state['has_duplicates'] = False
+    st.session_state['image_cache'] = {selected_folder: st.session_state['image_cache'].get(selected_folder, {})}
 
 def handle_submission(selected_folder, image_files_to_display, outer_images_to_display, use_full_filename, folder_to_data):
     current_filenames = {}
@@ -1203,40 +1239,27 @@ with tab2:
                         if selected_folder not in st.session_state['image_cache']:
                             st.session_state['image_cache'][selected_folder] = {}
 
-                        # 重建 image_files_to_display 和 outer_images_to_display_updated
+                        # 重建 image_files_to_display 和 outer_images_to_display
                         all_images = set(image_files + outer_images)
 
                         image_files_to_display = []
-                        outer_images_to_display_updated = []
+                        outer_images_to_display = []
 
                         for image_file in all_images:
                             if selected_folder in st.session_state['filename_changes'] and image_file in st.session_state['filename_changes'][selected_folder]:
                                 data = st.session_state['filename_changes'][selected_folder][image_file]
                                 if data['new_filename'] == '':
-                                    outer_images_to_display_updated.append(image_file)
+                                    outer_images_to_display.append(image_file)
                                 else:
                                     image_files_to_display.append(image_file)
                             else:
                                 if image_file in image_files:
                                     image_files_to_display.append(image_file)
                                 else:
-                                    outer_images_to_display_updated.append(image_file)
-
-                        # 根據新檔名排序圖片
-                        def get_sort_key(image_file):
-                            if selected_folder in st.session_state['filename_changes'] and image_file in st.session_state['filename_changes'][selected_folder]:
-                                data = st.session_state['filename_changes'][selected_folder][image_file]
-                                new_filename = data['new_filename']
-                                if new_filename != '':
-                                    return new_filename
-                                else:
-                                    # 使用最近非空檔名排序
-                                    return data.get('last_non_empty', image_file)
-                            else:
-                                return image_file
+                                    outer_images_to_display.append(image_file)
 
                         image_files_to_display.sort(key=get_sort_key)
-                        outer_images_to_display_updated.sort(key=get_sort_key)
+                        outer_images_to_display.sort(key=get_sort_key)
 
                         with st.form(f"filename_form_{selected_folder}"):
                             cols = st.columns(6)
@@ -1246,7 +1269,7 @@ with tab2:
                                 col = cols[idx % 6]
 
                                 # 總是使用原始檔名來讀取圖片
-                                image_path = os.path.join(img_folder_path, image_file) if image_file in image_files else os.path.join(outer_folder_path, image_file)
+                                image_path = os.path.join(img_folder_path, image_file)
                                 if image_path not in st.session_state['image_cache'][selected_folder]:
                                     image = Image.open(image_path)
                                     image = ImageOps.pad(image, (800, 800), method=Image.Resampling.LANCZOS)
@@ -1285,16 +1308,16 @@ with tab2:
 
                             # 顯示最外層資料夾圖片的 popover
                             col1, col2, col3 ,col4= st.columns([1.1,1.71,1.23, 1.23], vertical_alignment="center")
-                            if outer_images_to_display_updated:
+                            if outer_images_to_display:
                                 with col4.popover("查看外層圖片"):
                                     outer_cols = st.columns(6)
-                                    for idx, outer_image_file in enumerate(outer_images_to_display_updated):
+                                    for idx, outer_image_file in enumerate(outer_images_to_display):
                                         if idx % 6 == 0 and idx != 0:
                                             outer_cols = st.columns(6)
                                         col = outer_cols[idx % 6]
 
                                         # 總是使用原始檔名來讀取圖片
-                                        outer_image_path = os.path.join(outer_folder_path, outer_image_file) if outer_image_file in outer_images else os.path.join(img_folder_path, outer_image_file)
+                                        outer_image_path = os.path.join(outer_folder_path, outer_image_file)
 
                                         if outer_image_path not in st.session_state['image_cache'][selected_folder]:
                                             outer_image = Image.open(outer_image_path)
@@ -1343,7 +1366,7 @@ with tab2:
                                 ad_images_key = f"{selected_folder}_ad_images"
                                 num_images_options = [str(i) for i in range(1, 11)]
                                 ad_images_options = [str(i) for i in range(1, 11)]
-                                if outer_images_to_display_updated:
+                                if outer_images_to_display:
                                     with col3.popover("編圖數/廣告圖"):
                                         colA,colB = st.columns(2)
                                         colA.selectbox('張數', num_images_options, index=num_images_options.index(num_images_default), key=num_images_key)
@@ -1364,7 +1387,7 @@ with tab2:
                             col1.form_submit_button(
                                 "確認修改",
                                 on_click=handle_submission,
-                                args=(selected_folder, image_files_to_display, outer_images_to_display_updated, use_full_filename, folder_to_data )
+                                args=(selected_folder, image_files_to_display, outer_images_to_display, use_full_filename, folder_to_data )
                                 )
                             if st.session_state.get('has_duplicates') == True:
                                 col2.warning(f"檔名重複: {', '.join(st.session_state['duplicate_filenames'])}")
@@ -1405,37 +1428,36 @@ with tab2:
                                     else:
                                         zipf.write(file_path, arcname=arcname)
 
-                                # 再處理各個資料夾中的檔案
-                                for folder_name in top_level_folders:
-                                    folder_path = os.path.join(tmpdirname, folder_name)
-                                    for root, dirs, files in os.walk(folder_path):
-                                        for file in files:
-                                            full_path = os.path.join(root, file)
-                                            rel_path = os.path.relpath(full_path, tmpdirname)
-                                            path_parts = rel_path.split(os.sep)
+                                # 僅在下載時處理其他資料夾中的檔案
+                                folder_path = os.path.join(tmpdirname, selected_folder)
+                                for root, dirs, files in os.walk(folder_path):
+                                    for file in files:
+                                        full_path = os.path.join(root, file)
+                                        rel_path = os.path.relpath(full_path, tmpdirname)
+                                        path_parts = rel_path.split(os.sep)
 
-                                            original_file = file  # 保留原始檔名
-                                            if folder_name in st.session_state['filename_changes'] and original_file in st.session_state['filename_changes'][folder_name]:
-                                                data = st.session_state['filename_changes'][folder_name][original_file]
-                                                new_filename = data['new_filename']
-                                                if new_filename.strip() == '':
-                                                    # 檔名為空，放在最外層資料夾
-                                                    new_rel_path = os.path.join(folder_name, original_file)
-                                                    zipf.write(full_path, arcname=new_rel_path)
-                                                else:
-                                                    # 根據 use_full_filename 放置到正確的資料夾
-                                                    if use_full_filename:
-                                                        # 放在 2-IMG
-                                                        idx = path_parts.index(folder_name)
-                                                        path_parts = path_parts[:idx+1] + ['2-IMG', new_filename]
-                                                    else:
-                                                        # 放在 1-Main/All
-                                                        idx = path_parts.index(folder_name)
-                                                        path_parts = path_parts[:idx+1] + ['1-Main', 'All', new_filename]
-                                                    new_rel_path = os.path.join(*path_parts)
-                                                    zipf.write(full_path, arcname=new_rel_path)
+                                        original_file = file  # 保留原始檔名
+                                        if selected_folder in st.session_state['filename_changes'] and original_file in st.session_state['filename_changes'][selected_folder]:
+                                            data = st.session_state['filename_changes'][selected_folder][original_file]
+                                            new_filename = data['new_filename']
+                                            if new_filename.strip() == '':
+                                                # 檔名為空，放在最外層資料夾
+                                                new_rel_path = os.path.join(selected_folder, original_file)
+                                                zipf.write(full_path, arcname=new_rel_path)
                                             else:
-                                                zipf.write(full_path, arcname=rel_path)
+                                                # 根據 use_full_filename 放置到正確的資料夾
+                                                if use_full_filename:
+                                                    # 放在 2-IMG
+                                                    idx = path_parts.index(selected_folder)
+                                                    path_parts = path_parts[:idx+1] + ['2-IMG', new_filename]
+                                                else:
+                                                    # 放在 1-Main/All
+                                                    idx = path_parts.index(selected_folder)
+                                                    path_parts = path_parts[:idx+1] + ['1-Main', 'All', new_filename]
+                                                new_rel_path = os.path.join(*path_parts)
+                                                zipf.write(full_path, arcname=new_rel_path)
+                                        else:
+                                            zipf.write(full_path, arcname=rel_path)
 
                             zip_buffer.seek(0)
                             st.write("\n")
@@ -1452,4 +1474,3 @@ with tab2:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
-
