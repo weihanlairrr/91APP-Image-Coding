@@ -49,7 +49,7 @@ def load_existing_features(file_path):
     return {}
 
 # 定義儲存特徵的檔案路徑
-feature_file_path = '/Users/laiwei/Desktop/91APP_Image_Coding/image_features.pkl'
+feature_file_path = '/Users/laiwei/Desktop/91APP_Image_Coding/dependencies/image_features.pkl'
 
 # 如果已經存在特徵檔案，則載入現有的特徵
 features_by_category = load_existing_features(feature_file_path)
