@@ -904,6 +904,8 @@ with tab1:
         results = rename_numbers_in_folder(results)
 
         # 將結果轉換為 DataFrame 並顯示在頁面上
+        for result in results:
+            result["圖片"] = os.path.basename(result["圖片"])
         result_df = pd.DataFrame(results)
         st.dataframe(result_df, hide_index=True, use_container_width=True)
 
