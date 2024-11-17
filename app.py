@@ -962,7 +962,7 @@ with tab1:
 #%% 編圖複檢
 def get_outer_folder_images(folder_path):
     return sorted(
-        [f for f in os.listdir(folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'gif', 'bmp'))]
+        [f for f in os.listdir(folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg'))]
     )
 
 def get_prefix(image_files):
@@ -1001,7 +1001,7 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
             else:
                 default_text = filename_without_ext
         else:
-            default_text = filename_without_ext + extension
+            default_text = filename_without_ext  # 去掉副檔名
 
         if new_text.strip() == '':
             new_filename = ''
@@ -1009,7 +1009,7 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
             if not use_full_filename:
                 new_filename = prefix + new_text + extension
             else:
-                new_filename = new_text
+                new_filename = new_text + extension  # 重新加上副檔名
 
         current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
 
@@ -1033,11 +1033,11 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
             else:
                 new_filename = prefix + new_text + extension
         else:
-            default_text = filename_without_ext + extension
+            default_text = filename_without_ext  # 去掉副檔名
             if new_text.strip() == '':
                 new_filename = ''
             else:
-                new_filename = new_text
+                new_filename = new_text + extension  # 重新加上副檔名
 
         # 移回到 image_files_to_display
         if new_text.strip() != default_text:
@@ -1110,7 +1110,9 @@ def get_sort_key(image_file):
             return data.get('last_non_empty', image_file)
     else:
         return image_file
-    
+
+from collections import defaultdict  # 添加這一行
+
 with tab2:
     initialize_session_state()
     
@@ -1153,7 +1155,10 @@ with tab2:
 
             # 建立資料夾名稱與 '資料夾' 值的對應關係
             folder_to_data = {}
-            top_level_folders = [name for name in os.listdir(tmpdirname) if os.path.isdir(os.path.join(tmpdirname, name))]
+            top_level_folders = [
+                name for name in os.listdir(tmpdirname)
+                if os.path.isdir(os.path.join(tmpdirname, name)) and not name.startswith(('_', '.'))
+            ]
 
             for folder_name in top_level_folders:
                 matched = False
@@ -1261,6 +1266,12 @@ with tab2:
                         image_files_to_display.sort(key=get_sort_key)
                         outer_images_to_display_updated.sort(key=get_sort_key)
 
+                        # 建立 basename 與其對應的副檔名列表
+                        basename_to_extensions = defaultdict(list)
+                        for image_file in all_images:
+                            basename, ext = os.path.splitext(image_file)
+                            basename_to_extensions[basename].append(ext.lower())
+
                         with st.form(f"filename_form_{selected_folder}"):
                             cols = st.columns(6)
                             for idx, image_file in enumerate(image_files_to_display):
@@ -1272,18 +1283,23 @@ with tab2:
                                 image_path = os.path.join(img_folder_path, image_file) if image_file in image_files else os.path.join(outer_folder_path, image_file)
                                 if image_path not in st.session_state['image_cache'][selected_folder]:
                                     image = Image.open(image_path)
+                                    
+                                    # 為所有 PNG 圖片加上紅色外框
+                                    if image_file.lower().endswith('.png'):
+                                        image = ImageOps.expand(image, border=10, fill='red')
+                                    
                                     image = ImageOps.pad(image, (800, 800), method=Image.Resampling.LANCZOS)
                                     st.session_state['image_cache'][selected_folder][image_path] = image
                                 else:
                                     image = st.session_state['image_cache'][selected_folder][image_path]
-
+                                
                                 col.image(image, use_container_width=True)
 
                                 filename_without_ext = os.path.splitext(image_file)[0]
                                 extension = os.path.splitext(image_file)[1]
 
                                 if use_full_filename:
-                                    default_text = filename_without_ext + extension
+                                    default_text = filename_without_ext  # 去掉副檔名
                                 else:
                                     last_underscore_index = filename_without_ext.rfind('_')
                                     if last_underscore_index != -1:
@@ -1321,17 +1337,23 @@ with tab2:
 
                                         if outer_image_path not in st.session_state['image_cache'][selected_folder]:
                                             outer_image = Image.open(outer_image_path)
+                                            
+                                            # 為所有 PNG 圖片加上紅色外框
+                                            if outer_image_file.lower().endswith('.png'):
+                                                outer_image = ImageOps.expand(outer_image, border=10, fill='red')
+                                            
                                             outer_image = ImageOps.pad(outer_image, (800, 800), method=Image.Resampling.LANCZOS)
                                             st.session_state['image_cache'][selected_folder][outer_image_path] = outer_image
                                         else:
                                             outer_image = st.session_state['image_cache'][selected_folder][outer_image_path]
-
+                                        
                                         col.image(outer_image, use_container_width=True)
+
                                         filename_without_ext = os.path.splitext(outer_image_file)[0]
                                         extension = os.path.splitext(outer_image_file)[1]
 
                                         if use_full_filename:
-                                            default_text = filename_without_ext + extension
+                                            default_text = filename_without_ext  # 去掉副檔名
                                         else:
                                             last_underscore_index = filename_without_ext.rfind('_')
                                             if last_underscore_index != -1:
@@ -1394,72 +1416,58 @@ with tab2:
 
                         if any(st.session_state['confirmed_changes'].values()):
                             zip_buffer = BytesIO()
-                            with zipfile.ZipFile(zip_buffer, 'w') as zipf:
+                            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
                                 # 找出頂層的非資料夾檔案
                                 top_level_files = [name for name in os.listdir(tmpdirname) if os.path.isfile(os.path.join(tmpdirname, name))]
-
+                        
                                 # 先將頂層的非資料夾檔案加入 zip
                                 for file_name in top_level_files:
                                     file_path = os.path.join(tmpdirname, file_name)
                                     arcname = file_name
-                                    # 如果是編圖結果.xlsx，且有需要更新
-                                    if file_name == '編圖結果.xlsx' and excel_sheets and folder_to_data:
-                                        # 更新 '張數' 和 '廣告圖' 欄位
-                                        df = excel_sheets['編圖張數與廣告圖']
-                                        for idx, row in df.iterrows():
-                                            data_folder_name = str(row['資料夾'])
-                                            if data_folder_name in st.session_state['folder_values']:
-                                                df.at[idx, '張數'] = int(st.session_state['folder_values'][data_folder_name]['張數'])
-                                                df.at[idx, '廣告圖'] = int(st.session_state['folder_values'][data_folder_name]['廣告圖'])
-
-                                        # 重寫 Excel 文件
-                                        output = BytesIO()
-                                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                                            for sheet_name, df_sheet in excel_sheets.items():
-                                                if sheet_name == '編圖張數與廣告圖':
-                                                    df.to_excel(writer, sheet_name=sheet_name, index=False)
-                                                else:
-                                                    df_sheet.to_excel(writer, sheet_name=sheet_name, index=False)
-                                        output.seek(0)
-                                        zipf.writestr('編圖結果.xlsx', output.getvalue())
-                                    elif file_name == '編圖結果.xlsx' and not folder_to_data:
-                                        # 如果沒有編圖結果.xlsx，不包含在輸出 ZIP 中
-                                        continue
-                                    else:
+                                    try:
+                                        # 正確寫入文件
                                         zipf.write(file_path, arcname=arcname)
-
-                                # 再處理各個資料夾中的檔案
+                                    except Exception as e:
+                                        st.error(f"壓縮檔案時發生錯誤：{file_name} - {str(e)}")
+                        
+                                # 處理各個資料夾中的檔案
                                 for folder_name in top_level_folders:
                                     folder_path = os.path.join(tmpdirname, folder_name)
                                     for root, dirs, files in os.walk(folder_path):
+                                        if "_MACOSX" in root:
+                                            continue
                                         for file in files:
                                             full_path = os.path.join(root, file)
                                             rel_path = os.path.relpath(full_path, tmpdirname)
                                             path_parts = rel_path.split(os.sep)
-
-                                            original_file = file  # 保留原始檔名
+                        
+                                            original_file = file
                                             if folder_name in st.session_state['filename_changes'] and original_file in st.session_state['filename_changes'][folder_name]:
                                                 data = st.session_state['filename_changes'][folder_name][original_file]
                                                 new_filename = data['new_filename']
                                                 if new_filename.strip() == '':
-                                                    # 檔名為空，放在最外層資料夾
                                                     new_rel_path = os.path.join(folder_name, original_file)
-                                                    zipf.write(full_path, arcname=new_rel_path)
                                                 else:
-                                                    # 根據 use_full_filename 放置到正確的資料夾
                                                     if use_full_filename:
-                                                        # 放在 2-IMG
                                                         idx = path_parts.index(folder_name)
                                                         path_parts = path_parts[:idx+1] + ['2-IMG', new_filename]
                                                     else:
-                                                        # 放在 1-Main/All
                                                         idx = path_parts.index(folder_name)
                                                         path_parts = path_parts[:idx+1] + ['1-Main', 'All', new_filename]
                                                     new_rel_path = os.path.join(*path_parts)
-                                                    zipf.write(full_path, arcname=new_rel_path)
+                        
+                                                try:
+                                                    # 檢查是否已經寫入過同樣的路徑，避免重複寫入
+                                                    if new_rel_path not in zipf.namelist():
+                                                        zipf.write(full_path, arcname=new_rel_path)
+                                                except Exception as e:
+                                                    st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
                                             else:
-                                                zipf.write(full_path, arcname=rel_path)
-
+                                                try:
+                                                    zipf.write(full_path, arcname=rel_path)
+                                                except Exception as e:
+                                                    st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
+                        
                             zip_buffer.seek(0)
                             st.write("\n")
                             st.download_button(
@@ -1469,9 +1477,11 @@ with tab2:
                                 mime='application/zip',
                                 on_click=reset_file_uploader
                             )
+
                     else:
                         st.error("未找到圖片。")
                 else:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
+
