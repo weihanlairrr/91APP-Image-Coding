@@ -15,12 +15,11 @@ import tempfile
 from collections import Counter, defaultdict
 import chardet
 import faiss  
-import multiprocessing
 import functools
 
 st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕')
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-faiss.omp_set_num_threads(multiprocessing.cpu_count())
+faiss.omp_set_num_threads(1)
 
 # 自定義 CSS 以調整頁面樣式
 custom_css = """
@@ -1013,7 +1012,7 @@ def reset_tab2():
     st.session_state['last_text_inputs'] = {}
     st.session_state['has_duplicates'] = False
     st.session_state['duplicate_filenames'] = []
-    
+
 def reset_file_uploader():
     """
     重置文件上傳器的狀態。
@@ -1042,9 +1041,9 @@ def get_prefix(image_files):
     """
     for image_file in image_files:
         filename_without_ext = os.path.splitext(image_file)[0]
-        last_underscore_index = filename_without_ext.rfind('_')
-        if last_underscore_index != -1:
-            return filename_without_ext[:last_underscore_index + 1]
+        first_underscore_index = filename_without_ext.find('_')
+        if first_underscore_index != -1:
+            return filename_without_ext[:first_underscore_index + 1]
     return ""
 
 def reset_duplicates_flag():
@@ -1087,7 +1086,7 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
     if not use_full_filename:
         prefix = get_prefix(image_files_to_display)
         if prefix == "":
-            prefix = get_prefix(image_files)
+            prefix = get_prefix(image_files_to_display)
     else:
         prefix = ""
 
@@ -1100,9 +1099,9 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
         extension = os.path.splitext(image_file)[1]
 
         if not use_full_filename:
-            last_underscore_index = filename_without_ext.rfind('_')
-            if last_underscore_index != -1:
-                default_text = filename_without_ext[last_underscore_index + 1:]
+            first_underscore_index = filename_without_ext.find('_')
+            if first_underscore_index != -1:
+                default_text = filename_without_ext[first_underscore_index + 1:]
             else:
                 default_text = filename_without_ext
         else:
@@ -1128,9 +1127,9 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
         extension = os.path.splitext(outer_image_file)[1]
 
         if not use_full_filename:
-            last_underscore_index = filename_without_ext.rfind('_')
-            if last_underscore_index != -1:
-                default_text = filename_without_ext[last_underscore_index + 1:]
+            first_underscore_index = filename_without_ext.find('_')
+            if first_underscore_index != -1:
+                default_text = filename_without_ext[first_underscore_index + 1:]
             else:
                 default_text = filename_without_ext
 
@@ -1178,8 +1177,10 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
 
                     rename_counter += 1
 
-        # 一次性更新 session state 的 filename_changes
-        st.session_state['filename_changes'][selected_folder] = temp_filename_changes
+        # 更新 session state 的 filename_changes，逐個更新
+        if selected_folder not in st.session_state['filename_changes']:
+            st.session_state['filename_changes'][selected_folder] = {}
+        st.session_state['filename_changes'][selected_folder].update(temp_filename_changes)
 
         # 更新 text input 顯示
         for file, data in temp_filename_changes.items():
@@ -1202,6 +1203,7 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
         '廣告圖': ad_images_value
     }
 
+
 @functools.lru_cache(maxsize=512)
 def get_sort_key(image_file):
     """
@@ -1210,7 +1212,7 @@ def get_sort_key(image_file):
 
     參數:
         image_file: 圖片檔案名稱 (str)
-    
+
     回傳:
         排序鍵值 (str)，若有修改過的檔名則返回修改後的檔名，否則返回原始檔名。
     """
@@ -1226,6 +1228,27 @@ def get_sort_key(image_file):
     # 如果圖片檔名未被修改，則返回原始檔名
     return image_file
 
+def get_system_font():
+    """
+    自動選擇系統上可用的內建字體。
+    """
+    font_candidates = [
+        "Verdana",          
+        "Courier New",      
+        "Georgia",          
+        "Trebuchet MS",    
+    ]
+
+    for font_name in font_candidates:
+        try:
+            # 嘗試加載每個候選字體
+            return ImageFont.truetype(font_name, 100)
+        except OSError:
+            continue
+
+    # 如果所有字體均不可用，則使用默認字體
+    return ImageFont.load_default()
+
 def add_png_label(image):
     """
     在圖片右上角加上放大版的 "PNG" 標示，使用實心黑體字。
@@ -1235,12 +1258,7 @@ def add_png_label(image):
         加上標示後的 Image 物件
     """
     draw = ImageDraw.Draw(image)
-    try:
-        # 使用系統字體 Arial，大小設為 100
-        font = ImageFont.truetype("arial.ttf", 100)  # 請確認系統有安裝 Arial 字體
-    except OSError:
-        # 如果找不到 Arial 字體，使用 Noto Sans CJK 字體，適合中文系統
-        font = ImageFont.truetype("NotoSansCJK-Regular.ttc", 100)
+    font = get_system_font()
 
     text = "PNG"
     # 使用 `textbbox` 取得文字邊界大小
@@ -1322,10 +1340,10 @@ with tab2:
             if top_level_folders:
                 if 'previous_selected_folder' not in st.session_state:
                     st.session_state['previous_selected_folder'] = None
-                
+
                 if 'last_text_inputs' not in st.session_state:
                     st.session_state['last_text_inputs'] = {}
-                
+
                 previous_folder = st.session_state['previous_selected_folder']
                 selected_folder = st.pills(
                     "選擇一個資料夾",
@@ -1334,20 +1352,20 @@ with tab2:
                     label_visibility="collapsed",
                     on_change=reset_duplicates_flag
                 )
-                
+
                 # 當 `selected_folder` 變成 `None` 時，保存目前的 text_input 值
                 if selected_folder is None and previous_folder is not None:
                     st.session_state['last_text_inputs'][previous_folder] = {
                         key: st.session_state[key]
                         for key in st.session_state if key.startswith(f"{previous_folder}_")
                     }
-                
+
                 # 從 `None` 切回之前的資料夾時，恢復 text_input 值
                 if selected_folder is not None and previous_folder is None:
                     if selected_folder in st.session_state['last_text_inputs']:
                         for key, value in st.session_state['last_text_inputs'][selected_folder].items():
                             st.session_state[key] = value
-                
+
                 # 更新 previous_selected_folder
                 st.session_state['previous_selected_folder'] = selected_folder
 
@@ -1380,27 +1398,27 @@ with tab2:
                         if selected_folder not in st.session_state['image_cache']:
                             st.session_state['image_cache'][selected_folder] = {}
 
-                        # 重建 image_files_to_display 和 outer_images_to_display_updated
+                        # 重建 image_files_to_display 和 outer_images_to_display
                         all_images = set(image_files + outer_images)
 
                         image_files_to_display = []
-                        outer_images_to_display_updated = []
+                        outer_images_to_display = []
 
                         for image_file in all_images:
                             if selected_folder in st.session_state['filename_changes'] and image_file in st.session_state['filename_changes'][selected_folder]:
                                 data = st.session_state['filename_changes'][selected_folder][image_file]
                                 if data['new_filename'] == '':
-                                    outer_images_to_display_updated.append(image_file)
+                                    outer_images_to_display.append(image_file)
                                 else:
                                     image_files_to_display.append(image_file)
                             else:
                                 if image_file in image_files:
                                     image_files_to_display.append(image_file)
                                 else:
-                                    outer_images_to_display_updated.append(image_file)
+                                    outer_images_to_display.append(image_file)
 
                         image_files_to_display.sort(key=get_sort_key)
-                        outer_images_to_display_updated.sort(key=get_sort_key)
+                        outer_images_to_display.sort(key=get_sort_key)
 
                         # 建立 basename 與其對應的副檔名列表
                         basename_to_extensions = defaultdict(list)
@@ -1421,7 +1439,7 @@ with tab2:
                                     # 使用快取函數讀取與處理圖片
                                     add_label = image_file.lower().endswith('.png')
                                     image = load_and_process_image(image_path, add_label)
-                                
+
                                     # 將處理後的圖片快取，僅儲存路徑，避免儲存大型圖片物件
                                     st.session_state['image_cache'][selected_folder][image_path] = image
                                 else:
@@ -1435,9 +1453,9 @@ with tab2:
                                 if use_full_filename:
                                     default_text = filename_without_ext  # 去掉副檔名
                                 else:
-                                    last_underscore_index = filename_without_ext.rfind('_')
-                                    if last_underscore_index != -1:
-                                        default_text = filename_without_ext[last_underscore_index + 1:]
+                                    first_underscore_index = filename_without_ext.find('_')
+                                    if first_underscore_index != -1:
+                                        default_text = filename_without_ext[first_underscore_index + 1:]
                                     else:
                                         default_text = filename_without_ext
 
@@ -1451,17 +1469,17 @@ with tab2:
                                 # 初始化 session state，如果 key 不存在則賦予 modified_text
                                 if text_input_key not in st.session_state:
                                     st.session_state[text_input_key] = modified_text
-                                
+
                                 # 使用 session state 的值建立 text_input
                                 col.text_input('檔名', key=text_input_key, label_visibility="collapsed")
 
 
                             # 顯示最外層資料夾圖片的 popover
                             col1, col2, col3 ,col4= st.columns([1.1,1.71,1.23, 1.23], vertical_alignment="center")
-                            if outer_images_to_display_updated:
+                            if outer_images_to_display:
                                 with col4.popover("查看外層圖片"):
                                     outer_cols = st.columns(6)
-                                    for idx, outer_image_file in enumerate(outer_images_to_display_updated):
+                                    for idx, outer_image_file in enumerate(outer_images_to_display):
                                         if idx % 6 == 0 and idx != 0:
                                             outer_cols = st.columns(6)
                                         col = outer_cols[idx % 6]
@@ -1474,13 +1492,13 @@ with tab2:
                                             # 使用快取函數讀取並處理圖片
                                             add_label = outer_image_file.lower().endswith('.png')
                                             outer_image = load_and_process_image(outer_image_path, add_label)
-                                        
+
                                             # 儲存處理後的圖片至 session_state 的快取中
                                             st.session_state['image_cache'][selected_folder][outer_image_path] = outer_image
                                         else:
                                             # 直接從快取中取得圖片
                                             outer_image = st.session_state['image_cache'][selected_folder][outer_image_path]
-                                        
+
                                         col.image(outer_image, use_container_width=True)
 
                                         filename_without_ext = os.path.splitext(outer_image_file)[0]
@@ -1489,9 +1507,9 @@ with tab2:
                                         if use_full_filename:
                                             default_text = filename_without_ext  # 去掉副檔名
                                         else:
-                                            last_underscore_index = filename_without_ext.rfind('_')
-                                            if last_underscore_index != -1:
-                                                default_text = filename_without_ext[last_underscore_index + 1:]
+                                            first_underscore_index = filename_without_ext.find('_')
+                                            if first_underscore_index != -1:
+                                                default_text = filename_without_ext[first_underscore_index + 1:]
                                             else:
                                                 default_text = filename_without_ext
 
@@ -1522,12 +1540,12 @@ with tab2:
                                 ad_images_key = f"{selected_folder}_ad_images"
                                 if num_images_key not in st.session_state:
                                     st.session_state[num_images_key] = num_images_default
-                                
+
                                 if ad_images_key not in st.session_state:
                                     st.session_state[ad_images_key] = ad_images_default
                                 num_images_options = [str(i) for i in range(1, 11)]
                                 ad_images_options = [str(i) for i in range(1, 11)]
-                                if outer_images_to_display_updated:
+                                if outer_images_to_display:
                                     with col3.popover("編圖數/廣告圖"):
                                         colA,colB = st.columns(2)
                                         colA.selectbox('張數', num_images_options, index=num_images_options.index(num_images_default), key=num_images_key)
@@ -1547,11 +1565,11 @@ with tab2:
                             col1.form_submit_button(
                                 "暫存修改",
                                 on_click=handle_submission,
-                                args=(selected_folder, image_files_to_display, outer_images_to_display_updated, use_full_filename, folder_to_data )
+                                args=(selected_folder, image_files_to_display, outer_images_to_display, use_full_filename, folder_to_data )
                                 )
                             if st.session_state.get('has_duplicates') == True:
                                 col2.warning(f"檔名重複: {', '.join(st.session_state['duplicate_filenames'])}")
-                                
+
                         if any(st.session_state['confirmed_changes'].values()):
                             if st.checkbox("所有資料夾均完成修改"):
                                 with st.spinner('修改檔名中...'):
@@ -1559,7 +1577,7 @@ with tab2:
                                     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
                                         # 找出頂層的非資料夾檔案
                                         top_level_files = [name for name in os.listdir(tmpdirname) if os.path.isfile(os.path.join(tmpdirname, name))]
-                                
+
                                         # 先將頂層的非資料夾檔案加入 zip
                                         for file_name in top_level_files:
                                             file_path = os.path.join(tmpdirname, file_name)
@@ -1569,7 +1587,7 @@ with tab2:
                                                 zipf.write(file_path, arcname=arcname)
                                             except Exception as e:
                                                 st.error(f"壓縮檔案時發生錯誤：{file_name} - {str(e)}")
-                                
+
                                         # 處理各個資料夾中的檔案
                                         for folder_name in top_level_folders:
                                             folder_path = os.path.join(tmpdirname, folder_name)
@@ -1580,7 +1598,7 @@ with tab2:
                                                     full_path = os.path.join(root, file)
                                                     rel_path = os.path.relpath(full_path, tmpdirname)
                                                     path_parts = rel_path.split(os.sep)
-                                
+
                                                     original_file = file
                                                     if folder_name in st.session_state['filename_changes'] and original_file in st.session_state['filename_changes'][folder_name]:
                                                         data = st.session_state['filename_changes'][folder_name][original_file]
@@ -1595,7 +1613,7 @@ with tab2:
                                                                 idx = path_parts.index(folder_name)
                                                                 path_parts = path_parts[:idx+1] + ['1-Main', 'All', new_filename]
                                                             new_rel_path = os.path.join(*path_parts)
-                                
+
                                                         try:
                                                             # 檢查是否已經寫入過同樣的路徑，避免重複寫入
                                                             if new_rel_path not in zipf.namelist():
@@ -1626,7 +1644,7 @@ with tab2:
                                         # 將 '編圖結果.xlsx' 加入 zip
                                         excel_buffer.seek(0)
                                         zipf.writestr('編圖結果.xlsx', excel_buffer.getvalue())
-                            
+
                                 zip_buffer.seek(0)
                                 st.download_button(
                                     label='下載修改後的檔案',
