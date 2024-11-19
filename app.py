@@ -98,19 +98,61 @@ def get_preprocess_transforms():
         ),
     ])
 
-@st.cache_resource
-def load_image_features(train_file_path):
+def get_dynamic_nlist(num_samples):
     """
-    懶加載 .pkl 檔案，並返回特徵資料。
+    根據資料數量動態決定 nlist。
+    參數:
+        num_samples: 資料數量
+    回傳:
+        適合的 nlist 值
+    """
+    if num_samples >= 1000:
+        return min(200, int(np.sqrt(num_samples)))  # 大量資料，使用較高 nlist
+    elif num_samples >= 100:
+        return min(100, int(np.sqrt(num_samples)))  # 中等資料，使用中等 nlist
+    else:
+        return max(1, num_samples // 2)  # 少量資料，降低 nlist
+
+@st.cache_resource
+def load_image_features_with_ivf(train_file_path):
+    """
+    載入商品特徵並構建 Faiss 倒排索引。
     參數:
         train_file_path: .pkl 檔案的路徑
     回傳:
-        特徵資料字典
+        包含倒排索引和其他特徵信息的字典
     """
     with open(train_file_path, 'rb') as f:
         features_by_category = pickle.load(f)
-    return features_by_category
     
+    # 為每個分類構建倒排索引
+    for brand, categories in features_by_category.items():
+        for category, data in categories.items():
+            features = np.array([item["features"] for item in data["labeled_features"]], dtype=np.float32)
+            features = l2_normalize(features)  # L2 正規化
+            num_samples = len(features)
+            nlist = get_dynamic_nlist(num_samples)  # 動態計算 nlist
+            index = build_ivf_index(features, nlist)
+            features_by_category[brand][category]["index"] = index
+    return features_by_category
+
+def build_ivf_index(features, nlist):
+    """
+    使用倒排索引構建 Faiss 索引。
+    參數:
+        features: numpy array，形狀為 (n_samples, n_features)
+        nlist: 分簇數量
+    回傳:
+        Faiss 索引
+    """
+    d = features.shape[1]  # 特徵向量的維度
+    nlist = min(nlist, len(features))  # 確保簇數量不超過樣本數
+    quantizer = faiss.IndexFlatIP(d)  # 用於分簇的基礎索引，使用內積
+    index = faiss.IndexIVFFlat(quantizer, d, nlist, faiss.METRIC_INNER_PRODUCT)
+    index.train(features)  # 訓練索引，生成簇心
+    index.add(features)  # 添加數據到索引
+    return index
+
 def get_image_features(image, model):
     """
     提取圖像特徵的方法，支援 macOS MPS、CUDA 和 CPU。
@@ -387,7 +429,7 @@ with tab1:
         category_rules_df = pd.read_excel(angle_filename_reference, sheet_name='商品分類及關鍵字條件', usecols=[0, 1, 2])
         category_rules = {row.iloc[0]: {"keywords": row.iloc[1].split(','), "match_all": row.iloc[2]} for _, row in category_rules_df.iterrows()}
         
-        features_by_category = load_image_features(train_file)
+        features_by_category = load_image_features_with_ivf(train_file)
         # 複製一份原始特徵資料，避免在處理時修改到原始資料
         original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
 
@@ -571,32 +613,26 @@ with tab1:
                     'category': folder_special_category
                 }
             else:
-                # 修改開始：使用 Faiss 與餘弦相似度計算
+                # 修改開始：使用 IndexIVFFlat 與餘弦相似度計算
                 # 準備特徵數據
                 category_similarities = {}
                 for brand in features_by_category:
                     for category in features_by_category[brand]:
-                        labeled_features = features_by_category[brand][category]["labeled_features"]
-                        feature_array = np.array([item["features"] for item in labeled_features], dtype=np.float32)
-                        # L2 正規化
-                        feature_array = l2_normalize(feature_array)
-                        # 建立 Faiss 索引（內積）
-                        index = faiss.IndexFlatIP(feature_array.shape[1])
-                        index.add(feature_array)
-                        
-                        # 對資料夾中的所有圖像進行查詢
+                        index = features_by_category[brand][category]["index"]  # 使用預先構建的索引
+                        num_samples = len(features_by_category[brand][category]["labeled_features"])
+                        nlist = index.nlist
+                        nprobe = max(1, int(np.sqrt(nlist)))
+                        index.nprobe = nprobe  # 設定搜尋的簇數量
                         folder_similarities = []
+                        
                         for img_data in folder_features:
                             img_features = img_data["features"].astype(np.float32).reshape(1, -1)
-                            # L2 正規化
                             img_features = l2_normalize(img_features)
-                            similarities, _ = index.search(img_features, k=3)
+                            similarities, _ = index.search(img_features, k=5)
                             avg_similarity = np.mean(similarities)
                             folder_similarities.append(avg_similarity)
                         
-                        # 計算該分類的平均相似度
-                        avg_similarity = np.mean(folder_similarities)
-                        category_similarities[category] = avg_similarity
+                        category_similarities[category] = np.mean(folder_similarities)
                 
                 # 選擇平均相似度最高的分類
                 if category_similarities:
@@ -647,7 +683,12 @@ with tab1:
                             
                             # 根據相似度選擇最佳角度
                             for angle in valid_special_angles:
-                                # 修改開始：使用 Faiss 查詢特定角度的相似度
+                                # 修改開始：使用預先構建的索引
+                                index = features_by_category[selected_brand][best_category["category"]]["index"]
+                                num_samples = len(features_by_category[selected_brand][best_category["category"]]["labeled_features"])
+                                nlist = index.nlist
+                                nprobe = max(1, int(np.sqrt(nlist)))
+                                index.nprobe = nprobe
                                 angle_features = [
                                     item["features"] for item in filtered_by_category 
                                     if item["labels"]["angle"] == angle
@@ -655,12 +696,12 @@ with tab1:
                                 if not angle_features:
                                     continue
                                 angle_features = np.array(angle_features, dtype=np.float32)
-                                # L2 正規化
                                 angle_features = l2_normalize(angle_features)
-                                index = faiss.IndexFlatIP(angle_features.shape[1])
-                                index.add(angle_features)
+                                # 創建臨時索引
+                                temp_index = faiss.IndexFlatIP(angle_features.shape[1])
+                                temp_index.add(angle_features)
                                 img_query = l2_normalize(img_features.astype(np.float32).reshape(1, -1))
-                                similarities, _ = index.search(img_query, k=1)
+                                similarities, _ = temp_index.search(img_query, k=1)
                                 similarity_percentage = similarities[0][0] * 100
                                 # 修改結束
                                 valid_angles_by_similarity.append(
@@ -744,13 +785,15 @@ with tab1:
 
             # 準備特徵數據
             labeled_features = filtered_by_category
-            feature_array = np.array([item["features"] for item in labeled_features], dtype=np.float32)
-            # L2 正規化
-            feature_array = l2_normalize(feature_array)
+            features = np.array([item["features"] for item in labeled_features], dtype=np.float32)
+            features = l2_normalize(features)
             labels = [item["labels"] for item in labeled_features]
-            # 建立 Faiss 索引（內積）
-            index = faiss.IndexFlatIP(feature_array.shape[1])
-            index.add(feature_array)
+            # 使用預先構建的索引
+            index = features_by_category[selected_brand][best_category["category"]]["index"]
+            num_samples = len(features_by_category[selected_brand][best_category["category"]]["labeled_features"])
+            nlist = index.nlist
+            nprobe = max(1, int(np.sqrt(nlist)))
+            index.nprobe = nprobe  # 設定搜尋的簇數量
 
             # 對非特殊圖像進行相似度計算
             for img_data in non_special_images:
@@ -759,7 +802,6 @@ with tab1:
                     continue
 
                 img_features = img_data["features"].astype(np.float32).reshape(1, -1)
-                # L2 正規化
                 img_features = l2_normalize(img_features)
                 similarities, indices = index.search(img_features, k=len(labels))
                 similarities = similarities.flatten()
@@ -940,7 +982,7 @@ with tab1:
             on_click=reset_file_uploader
         ):
             st.rerun()  
-   
+
 #%% 編圖複檢
 def initialize_tab2():
     """
