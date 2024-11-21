@@ -293,6 +293,18 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         if os.path.exists(old_image_path):
             os.rename(old_image_path, new_image_path)  # 重新命名或移動圖像檔案
 
+    # 處理 skipped_images，將其移動到最外層資料夾
+    for skipped in skipped_images:
+        folder_name = skipped["資料夾"]
+        image_file = skipped["圖片"]
+
+        folder_path = os.path.join(output_folder_path, folder_name)
+        old_image_path = os.path.join(folder_path, image_file)
+        new_image_path = os.path.join(folder_path, os.path.basename(image_file))  # 保留在最外層資料夾
+
+        if os.path.exists(old_image_path):
+            os.rename(old_image_path, new_image_path)  # 移動到最外層
+
     zip_buffer = BytesIO()  # 創建內存中的緩衝區
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
         for folder in os.listdir("uploaded_images"):
@@ -310,7 +322,6 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         zipf.writestr("編圖結果.xlsx", output_excel_data)  # 添加結果 Excel 檔到壓縮檔
 
     return zip_buffer.getvalue()  # 返回壓縮檔的二進位數據
-
 
 def category_match(image_files, keywords, match_all):
     """
@@ -416,7 +427,6 @@ with tab1:
         main_folder_structure = dependencies["main_folder_structure"]
         
         keywords_to_skip = pd.read_excel(angle_filename_reference, sheet_name='移到外層的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
-        
         substitute_df = pd.read_excel(angle_filename_reference, sheet_name='有條件使用的檔名', usecols=[0, 1])
         substitute = [{"set_a": row.iloc[0].split(','), "set_b": row.iloc[1].split(',')} for _, row in substitute_df.iterrows()]
         
@@ -929,7 +939,7 @@ with tab1:
         # 將結果轉換為 DataFrame 並顯示在頁面上
         result_df = pd.DataFrame(results)
         st.dataframe(result_df, hide_index=True, use_container_width=True)
-
+        
         # 創建 '編圖張數與廣告圖' 的資料
         folder_data = []
         for folder in image_folders:
@@ -943,15 +953,15 @@ with tab1:
                 ad_images = valid_images[valid_images['角度'].str.contains('情境|HM')]
                 num_ad_images = len(ad_images)
                 if num_ad_images > 0:
-                    ad_image_value = num_ad_images + 1
+                    ad_image_value = f"{num_ad_images + 1:02}"  # 格式化為兩位數字
                 else:
-                    ad_image_value = 1
+                    ad_image_value = "01"  # 格式化為兩位數字
             else:
                 # 其他品牌廣告圖欄位
                 ad_image_value = ""
-                
+        
             folder_data.append({'資料夾': folder, '張數': num_images, '廣告圖': ad_image_value})
-
+        
         folder_df = pd.DataFrame(folder_data)
         image_type_statistics_df = generate_image_type_statistics(result_df)
         
@@ -962,6 +972,7 @@ with tab1:
             folder_df.to_excel(writer, sheet_name='編圖張數與廣告圖', index=False)
             image_type_statistics_df.to_excel(writer, sheet_name='圖片類型統計', index=False)
         excel_data = excel_buffer.getvalue()
+
 
         # 重新命名並壓縮資料夾和結果 Excel 檔案
         zip_data = rename_and_zip_folders(results, excel_data, skipped_images)
@@ -995,6 +1006,7 @@ def initialize_tab2():
         'has_duplicates': False,
         'duplicate_filenames': [],
         'file_uploader_key2': 4,
+        'modified_folders': set(),
     }
 
     for key, value in defaults.items():
@@ -1012,6 +1024,7 @@ def reset_tab2():
     st.session_state['last_text_inputs'] = {}
     st.session_state['has_duplicates'] = False
     st.session_state['duplicate_filenames'] = []
+    st.session_state['modified_folders'] = set()
 
 def reset_file_uploader():
     """
@@ -1203,6 +1216,8 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
         '廣告圖': ad_images_value
     }
 
+    # 記錄修改過的資料夾
+    st.session_state['modified_folders'].add(data_folder_name)
 
 @functools.lru_cache(maxsize=512)
 def get_sort_key(image_file):
@@ -1233,10 +1248,10 @@ def get_system_font():
     自動選擇系統上可用的內建字體。
     """
     font_candidates = [
-        "Verdana",          
-        "Courier New",      
-        "Georgia",          
-        "Trebuchet MS",    
+        "Verdana",
+        "Courier New",
+        "Georgia",
+        "Trebuchet MS",
     ]
 
     for font_name in font_candidates:
@@ -1300,11 +1315,11 @@ with tab2:
                         folder_name = str(row['資料夾'])
                         folder_to_row_idx[folder_name] = idx
                 else:
-                    sheet_df = None
+                    sheet_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
                     folder_to_row_idx = {}
             else:
                 excel_sheets = {}
-                sheet_df = None
+                sheet_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
                 folder_to_row_idx = {}
 
             # 建立資料夾名稱與 '資料夾' 值的對應關係
@@ -1332,6 +1347,15 @@ with tab2:
                         '資料夾': folder_name,
                         '張數': '1',
                         '廣告圖': '1'
+                    }
+
+            # 初始化 folder_values，確保所有資料夾都有初始值
+            for folder_name, data in folder_to_data.items():
+                data_folder_name = data.get('資料夾', folder_name)
+                if data_folder_name not in st.session_state['folder_values']:
+                    st.session_state['folder_values'][data_folder_name] = {
+                        '張數': data.get('張數', '1'),
+                        '廣告圖': data.get('廣告圖', '1')
                     }
 
             if 'previous_selected_folder' not in st.session_state and top_level_folders:
@@ -1548,14 +1572,14 @@ with tab2:
                                 if outer_images_to_display:
                                     with col3.popover("編圖數/廣告圖"):
                                         colA,colB = st.columns(2)
-                                        colA.selectbox('張數', num_images_options, index=num_images_options.index(num_images_default), key=num_images_key)
-                                        colB.selectbox('廣告圖', ad_images_options, index=ad_images_options.index(ad_images_default), key=ad_images_key)
+                                        colA.selectbox('張數', num_images_options, index=num_images_options.index(str(st.session_state[num_images_key])), key=num_images_key)
+                                        colB.selectbox('廣告圖', ad_images_options, index=ad_images_options.index(str(st.session_state[ad_images_key])), key=ad_images_key)
                                         st.warning('若有修改記得點擊 "暫存修改"')
                                 else:
                                     with col4.popover("編圖數/廣告圖"):
                                         colA,colB = st.columns(2)
-                                        colA.selectbox('張數', num_images_options, index=num_images_options.index(num_images_default), key=num_images_key)
-                                        colB.selectbox('廣告圖', ad_images_options, index=ad_images_options.index(ad_images_default), key=ad_images_key)
+                                        colA.selectbox('張數', num_images_options, index=num_images_options.index(str(st.session_state[num_images_key])), key=num_images_key)
+                                        colB.selectbox('廣告圖', ad_images_options, index=ad_images_options.index(str(st.session_state[ad_images_key])), key=ad_images_key)
                                         st.warning('若有修改記得點擊 "暫存修改"')
                             else:
                                 num_images_key = None
@@ -1584,7 +1608,8 @@ with tab2:
                                             arcname = file_name
                                             try:
                                                 # 正確寫入文件
-                                                zipf.write(file_path, arcname=arcname)
+                                                if file_name != '編圖結果.xlsx':
+                                                    zipf.write(file_path, arcname=arcname)
                                             except Exception as e:
                                                 st.error(f"壓縮檔案時發生錯誤：{file_name} - {str(e)}")
 
@@ -1627,32 +1652,72 @@ with tab2:
                                                             st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
                                         # 生成 '編圖結果.xlsx' 並加入 zip
                                         excel_buffer = BytesIO()
-                                        result_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
-                                        for folder_name in top_level_folders:
-                                            num_images_key = f"{folder_name}_num_images"
-                                            ad_images_key = f"{folder_name}_ad_images"
-                                            num_images = st.session_state.get(num_images_key, '1')
-                                            ad_images = st.session_state.get(ad_images_key, '1')
-                                            new_row = pd.DataFrame([{
-                                                '資料夾': folder_name,
-                                                '張數': num_images,
-                                                '廣告圖': ad_images
-                                            }])
-                                            result_df = pd.concat([result_df, new_row], ignore_index=True)
-                                        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                                            result_df.to_excel(writer, index=False, sheet_name='編圖張數與廣告圖')
-                                        # 將 '編圖結果.xlsx' 加入 zip
+
+                                        if excel_sheets:
+                                            # 如果上傳的檔案中有 '編圖結果.xlsx'
+                                            result_df = excel_sheets.get('編圖張數與廣告圖', pd.DataFrame(columns=['資料夾', '張數', '廣告圖']))
+
+                                            # 更新所有資料夾的 '張數' 和 '廣告圖' 值
+                                            for idx, row in result_df.iterrows():
+                                                data_folder_name = str(row['資料夾'])
+                                                if data_folder_name in st.session_state['folder_values']:
+                                                    num_images = st.session_state['folder_values'][data_folder_name]['張數']
+                                                    ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
+                                                    ad_images = f"{int(ad_images):02}"  # 格式化為兩位數字
+
+                                                    result_df.at[idx, '張數'] = num_images
+                                                    result_df.at[idx, '廣告圖'] = ad_images
+
+                                            # 如果有新的資料夾沒有在原始 Excel 中，添加它們
+                                            existing_folders = set(result_df['資料夾'])
+                                            for data_folder_name in st.session_state['folder_values']:
+                                                if data_folder_name not in existing_folders:
+                                                    num_images = st.session_state['folder_values'][data_folder_name]['張數']
+                                                    ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
+                                                    ad_images = f"{int(ad_images):02}"  # 格式化為兩位數字
+
+                                                    new_row = pd.DataFrame([{
+                                                        '資料夾': data_folder_name,
+                                                        '張數': num_images,
+                                                        '廣告圖': ad_images
+                                                    }])
+                                                    result_df = pd.concat([result_df, new_row], ignore_index=True)
+
+                                            # 更新 excel_sheets
+                                            excel_sheets['編圖張數與廣告圖'] = result_df
+
+                                            # 寫入所有工作表
+                                            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                                                for sheet_name, df in excel_sheets.items():
+                                                    df.to_excel(writer, index=False, sheet_name=sheet_name)
+                                        else:
+                                            # 如果上傳的檔案中沒有 '編圖結果.xlsx'
+                                            result_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
+                                            for data_folder_name in st.session_state['folder_values']:
+                                                num_images = st.session_state['folder_values'][data_folder_name]['張數']
+                                                ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
+                                                ad_images = f"{int(ad_images):02}"  # 格式化為兩位數字
+                                                new_row = pd.DataFrame([{
+                                                    '資料夾': data_folder_name,
+                                                    '張數': num_images,
+                                                    '廣告圖': ad_images
+                                                }])
+                                                result_df = pd.concat([result_df, new_row], ignore_index=True)
+                                            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                                                result_df.to_excel(writer, index=False, sheet_name='編圖張數與廣告圖')
+
+                                        # 將 '編圖結果.xlsx' 加入 zip，覆蓋原始檔案
                                         excel_buffer.seek(0)
                                         zipf.writestr('編圖結果.xlsx', excel_buffer.getvalue())
 
-                                zip_buffer.seek(0)
-                                st.download_button(
-                                    label='下載修改後的檔案',
-                                    data=zip_buffer,
-                                    file_name=uploaded_file.name,
-                                    mime='application/zip',
-                                    on_click=reset_file_uploader
-                                )
+                                    zip_buffer.seek(0)
+                                    st.download_button(
+                                        label='下載修改後的檔案',
+                                        data=zip_buffer,
+                                        file_name=uploaded_file.name,
+                                        mime='application/zip',
+                                        on_click=reset_file_uploader
+                                    )
 
                     else:
                         st.error("未找到圖片。")
@@ -1660,3 +1725,5 @@ with tab2:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
+
+
