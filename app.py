@@ -1083,29 +1083,31 @@ def load_and_process_image(image_path, add_label=False):
 
     return image
 
-def handle_submission(selected_folder, image_files_to_display, outer_images_to_display, use_full_filename, folder_to_data):
+def handle_submission(selected_folder, images_to_display, outer_images_to_display, use_full_filename, folder_to_data):
     """
     處理圖片檔名修改的提交邏輯，包含重命名邏輯與重複檢查。
     參數:
         selected_folder: 當前選擇的資料夾名稱
-        image_files_to_display: 需要顯示的圖片檔案列表（主要處理的圖片）
+        images_to_display: 需要顯示的圖片檔案列表（主要處理的圖片）
         outer_images_to_display: 外層資料夾的圖片列表
         use_full_filename: 是否使用完整檔名進行命名
         folder_to_data: 資料夾對應的資料（例如張數和廣告圖）
     """
     current_filenames = {}
     temp_filename_changes = {}
+    modified_outer_count = 0  # 記錄修改的 outer images 數量
+    removed_image_count = 0  # 記錄 images_to_display 被移除的數量
 
     # 獲取前綴（僅針對 `1-Main/All`）
     if not use_full_filename:
-        prefix = get_prefix(image_files_to_display)
+        prefix = get_prefix(images_to_display)
         if prefix == "":
-            prefix = get_prefix(image_files_to_display)
+            prefix = get_prefix(images_to_display)
     else:
         prefix = ""
 
-    # 處理 image_files_to_display 的圖片（僅限 `1-Main/All`）
-    for image_file in image_files_to_display:
+    # 處理 images_to_display 的圖片（僅限 `1-Main/All`）
+    for image_file in images_to_display:
         text_input_key = f"{selected_folder}_{image_file}"
         new_text = st.session_state.get(text_input_key, "")
 
@@ -1131,6 +1133,10 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
 
         current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
         temp_filename_changes[image_file] = {'new_filename': new_filename, 'text': new_text}
+
+        # 如果修改後的檔名為空，記錄移除數量
+        if new_filename == '':
+            removed_image_count += 1
 
     # 處理 outer_images_to_display 的圖片
     for outer_image_file in outer_images_to_display:
@@ -1161,6 +1167,10 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
         if new_text.strip() != default_text:
             current_filenames[outer_image_file] = {'new_filename': new_filename, 'text': new_text}
             temp_filename_changes[outer_image_file] = {'new_filename': new_filename, 'text': new_text}
+
+            # 如果新檔名不為空且有修改，計數修改的 outer images
+            if new_filename != '':
+                modified_outer_count += 1
 
     # 檢查重複檔名
     new_filenames = [data['new_filename'] for data in temp_filename_changes.values() if data['new_filename'] != '']
@@ -1201,12 +1211,12 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
             text_input_key = f"{selected_folder}_{file}"
             st.session_state[text_input_key] = data['text']
 
-    # 自動調整張數值
-    num_outer_images = len([file for file, data in temp_filename_changes.items() if data['new_filename'] == ''])
+    # 調整張數值，考慮 removed 和 modified_outer_count
     num_images_key = f"{selected_folder}_num_images"
     if num_images_key in st.session_state:
         current_num_images = int(st.session_state[num_images_key])
-        st.session_state[num_images_key] = str(max(1, current_num_images - num_outer_images))
+        # 減去被移除的數量，增加修改的 outer images 數量
+        st.session_state[num_images_key] = str(max(1, current_num_images - removed_image_count + modified_outer_count))
 
     ad_images_key = f"{selected_folder}_ad_images"
     ad_images_value = st.session_state.get(ad_images_key)
@@ -1219,6 +1229,7 @@ def handle_submission(selected_folder, image_files_to_display, outer_images_to_d
 
     # 記錄修改過的資料夾
     st.session_state['modified_folders'].add(data_folder_name)
+
 
 @functools.lru_cache(maxsize=512)
 def get_sort_key(image_file):
@@ -1423,10 +1434,10 @@ with tab2:
                         if selected_folder not in st.session_state['image_cache']:
                             st.session_state['image_cache'][selected_folder] = {}
 
-                        # 重建 image_files_to_display 和 outer_images_to_display
+                        # 重建 images_to_display 和 outer_images_to_display
                         all_images = set(image_files + outer_images)
 
-                        image_files_to_display = []
+                        images_to_display = []
                         outer_images_to_display = []
 
                         for image_file in all_images:
@@ -1435,14 +1446,14 @@ with tab2:
                                 if data['new_filename'] == '':
                                     outer_images_to_display.append(image_file)
                                 else:
-                                    image_files_to_display.append(image_file)
+                                    images_to_display.append(image_file)
                             else:
                                 if image_file in image_files:
-                                    image_files_to_display.append(image_file)
+                                    images_to_display.append(image_file)
                                 else:
                                     outer_images_to_display.append(image_file)
 
-                        image_files_to_display.sort(key=get_sort_key)
+                        images_to_display.sort(key=get_sort_key)
                         outer_images_to_display.sort(key=get_sort_key)
 
                         # 建立 basename 與其對應的副檔名列表
@@ -1453,7 +1464,7 @@ with tab2:
 
                         with st.form(f"filename_form_{selected_folder}"):
                             cols = st.columns(6)
-                            for idx, image_file in enumerate(image_files_to_display):
+                            for idx, image_file in enumerate(images_to_display):
                                 if idx % 6 == 0 and idx != 0:
                                     cols = st.columns(6)
                                 col = cols[idx % 6]
@@ -1590,7 +1601,7 @@ with tab2:
                             col1.form_submit_button(
                                 "暫存修改",
                                 on_click=handle_submission,
-                                args=(selected_folder, image_files_to_display, outer_images_to_display, use_full_filename, folder_to_data )
+                                args=(selected_folder, images_to_display, outer_images_to_display, use_full_filename, folder_to_data )
                                 )
                             if st.session_state.get('has_duplicates') == True:
                                 col2.warning(f"檔名重複: {', '.join(st.session_state['duplicate_filenames'])}")
