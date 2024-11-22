@@ -986,7 +986,7 @@ with tab1:
         if st.download_button(
             label="下載編圖結果",
             data=zip_data,
-            file_name=f"{uploaded_zip_name}.zip",
+            file_name=f"{uploaded_zip_name}_結果.zip",
             mime="application/zip",
             on_click=reset_file_uploader
         ):
