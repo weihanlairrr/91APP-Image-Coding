@@ -976,6 +976,7 @@ with tab1:
 
         # 重新命名並壓縮資料夾和結果 Excel 檔案
         zip_data = rename_and_zip_folders(results, excel_data, skipped_images)
+        uploaded_zip_name = os.path.splitext(uploaded_zip.name)[0]  
         
         # 刪除上傳的圖像資料夾和臨時壓縮檔
         shutil.rmtree("uploaded_images")
@@ -985,7 +986,7 @@ with tab1:
         if st.download_button(
             label="下載編圖結果",
             data=zip_data,
-            file_name="編圖結果.zip",
+            file_name=f"{uploaded_zip_name}.zip",
             mime="application/zip",
             on_click=reset_file_uploader
         ):
@@ -1725,5 +1726,3 @@ with tab2:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
-
-
