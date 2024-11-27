@@ -268,26 +268,27 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         壓縮檔的二進位數據
     """
     output_folder_path = "uploaded_images"  # 根資料夾
-    
+
     for result in results:
         folder_name = result["資料夾"]
         image_file = result["圖片"]
         new_number = result["編號"]
-        
+
         # 設定主資料夾路徑
         folder_path = os.path.join(output_folder_path, folder_name)
         main_folder_path = os.path.join(folder_path, main_folder_structure)
         os.makedirs(main_folder_path, exist_ok=True)  # 創建主資料夾
-            
+
         old_image_path = os.path.join(folder_path, image_file)
+        file_extension = os.path.splitext(image_file)[1]  # 取得原始檔案的副檔名
 
         # 如果編號超過上限或為空，將圖片保留在最外層資料夾
         if new_number == "超過上限" or pd.isna(new_number):
-            new_image_path = os.path.join(folder_path, os.path.basename(image_file))  
+            new_image_path = os.path.join(folder_path, os.path.basename(image_file))
         else:
-            new_image_name = f"{folder_name}_{new_number}.jpg"  # 新的圖像名稱
+            new_image_name = f"{folder_name}_{new_number}{file_extension}"  # 保留原始檔案的副檔名
             new_image_path = os.path.join(main_folder_path, new_image_name)
-        
+
         os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
 
         if os.path.exists(old_image_path):
@@ -313,12 +314,12 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
                 new_folder_name = f"{folder}_OK"  # 新的資料夾名稱
                 new_folder_path = os.path.join("uploaded_images", new_folder_name)
                 os.rename(folder_path, new_folder_path)  # 重新命名資料夾
-                
+
                 for root, dirs, files in os.walk(new_folder_path):
                     for file in files:
                         file_path = os.path.join(root, file)
                         zipf.write(file_path, os.path.relpath(file_path, "uploaded_images"))  # 添加檔案到壓縮檔
-        
+
         zipf.writestr("編圖結果.xlsx", output_excel_data)  # 添加結果 Excel 檔到壓縮檔
 
     return zip_buffer.getvalue()  # 返回壓縮檔的二進位數據
