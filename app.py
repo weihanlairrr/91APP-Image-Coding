@@ -222,16 +222,30 @@ def get_images_in_folder(folder_path):
         圖像檔案的相對路徑和完整路徑的列表
     """
     image_files = []
-    for root, dirs, files in os.walk(folder_path):
-        for file in files:
-            # 跳過隱藏檔案和子目錄
-            if file.startswith('.') or os.path.isdir(os.path.join(root, file)):
-                continue
-            # 檢查檔案副檔名是否為圖像格式
+    two_img_folder_path = os.path.join(folder_path, '2-IMG')
+    st.session_state["use_two_img_folder"] = False
+
+    # 確認是否存在 2-IMG 資料夾，並設定狀態
+    if os.path.exists(two_img_folder_path) and os.path.isdir(two_img_folder_path):
+        st.session_state["use_two_img_folder"] = True
+        # 只處理 '2-IMG' 資料夾內的圖片
+        for file in os.listdir(two_img_folder_path):
             if file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
-                full_image_path = os.path.join(root, file)
+                full_image_path = os.path.join(two_img_folder_path, file)
                 relative_image_path = os.path.relpath(full_image_path, folder_path)
                 image_files.append((relative_image_path, full_image_path))
+    else:
+        # 原本的邏輯，遍歷整個資料夾
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                # 跳過隱藏檔案和子目錄
+                if file.startswith('.') or os.path.isdir(os.path.join(root, file)):
+                    continue
+                # 檢查檔案副檔名是否為圖像格式
+                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
+                    full_image_path = os.path.join(root, file)
+                    relative_image_path = os.path.relpath(full_image_path, folder_path)
+                    image_files.append((relative_image_path, full_image_path))
     return image_files
 
 def rename_numbers_in_folder(results):
@@ -273,9 +287,20 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         folder_name = result["資料夾"]
         image_file = result["圖片"]
         new_number = result["編號"]
+        angle = result["角度"]  # 新增：獲取分配的角度
+
+        # 查找是否有指定前綴
+        specified_prefix = angle_to_prefix.get(angle, None)
+
+        # 確定前綴：如果有指定前綴，使用它；否則使用資料夾名稱
+        prefix = specified_prefix if specified_prefix else folder_name
 
         # 設定主資料夾路徑
         folder_path = os.path.join(output_folder_path, folder_name)
+        if "use_two_img_folder" in st.session_state and st.session_state["use_two_img_folder"]:
+            main_folder_structure = "2-IMG"
+        else:
+            main_folder_structure = "1-Main/All"
         main_folder_path = os.path.join(folder_path, main_folder_structure)
         os.makedirs(main_folder_path, exist_ok=True)  # 創建主資料夾
 
@@ -286,7 +311,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         if new_number == "超過上限" or pd.isna(new_number):
             new_image_path = os.path.join(folder_path, os.path.basename(image_file))
         else:
-            new_image_name = f"{folder_name}_{new_number}{file_extension}"  # 保留原始檔案的副檔名
+            new_image_name = f"{prefix}_{new_number}{file_extension}"  # 使用指定前綴或資料夾名稱
             new_image_path = os.path.join(main_folder_path, new_image_name)
 
         os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
@@ -395,7 +420,6 @@ with tab1:
             "train_file": "dependencies/image_features.pkl",
             "angle_filename_reference": "dependencies/ADS檔名角度對照表.xlsx",
             "label_limit": 10,
-            "main_folder_structure": "1-Main/All"
         },
     }
     
@@ -425,7 +449,6 @@ with tab1:
         train_file = dependencies["train_file"]
         angle_filename_reference = dependencies["angle_filename_reference"]
         label_limit = dependencies["label_limit"]
-        main_folder_structure = dependencies["main_folder_structure"]
         
         keywords_to_skip = pd.read_excel(angle_filename_reference, sheet_name='移到外層的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
         substitute_df = pd.read_excel(angle_filename_reference, sheet_name='有條件使用的檔名', usecols=[0, 1])
@@ -459,6 +482,9 @@ with tab1:
     
         # 初始化特殊映射字典
         special_mappings = {}
+        # 建立角度與指定前綴的對應關係
+        angle_to_prefix = {}
+
         if selected_brand == "ADS":
             # 讀取特定品牌的檔名角度對照表
             df_angles = pd.read_excel(angle_filename_reference, sheet_name="檔名角度對照表")
@@ -474,17 +500,25 @@ with tab1:
                     if match:
                         category = match.group(1).strip()
                         category_filename_raw = match.group(2).strip()
-                        category_filename = [x.strip() for x in category_filename_raw.split(',')]  # 修改此處，支持多個條件
+                        category_filename = [x.strip() for x in category_filename_raw.split(',')]  # 支持多個條件
                     else:
                         category = category_raw
                         category_filename = None
                 angle = str(row.iloc[2]).strip()
                 angles = [a.strip() for a in angle.split(',')]
+                # 處理指定前綴
+                prefix = row.iloc[3] if len(row) > 3 and not pd.isna(row.iloc[3]) else None
+
                 special_mappings[keyword] = {
                     'category': category, 
                     'category_filename': category_filename,
-                    'angles': angles
+                    'angles': angles,
+                    'prefix': prefix  # 儲存指定前綴
                 }
+
+                # 建立角度與指定前綴的對應
+                for a in angles:
+                    angle_to_prefix[a] = prefix
     
         # 獲取所有上傳的圖像資料夾
         image_folders = [
@@ -580,7 +614,7 @@ with tab1:
                             special_category = mapping['category']
                             category_filename = mapping.get('category_filename')
                             if category_filename:
-                                # 修改此處，支持多個 category_filename 條件
+                                # 支持多個 category_filename 條件
                                 if any(cond in fname for fname in image_filenames for cond in category_filename):
                                     pass 
                                 else:
@@ -730,7 +764,7 @@ with tab1:
                                     best_angle = angle
                                     best_similarity = similarity_percentage
                                     break
-                        
+                            
                             if best_angle:
                                 used_angles.add(best_angle)  # 標記角度為已使用
                                 label_info = {
@@ -992,6 +1026,7 @@ with tab1:
             on_click=reset_file_uploader
         ):
             st.rerun()  
+
 
 #%% 編圖複檢
 def initialize_tab2():
