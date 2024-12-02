@@ -1289,9 +1289,21 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
     ad_images_value = st.session_state.get(ad_images_key)
     data = folder_to_data.get(selected_folder, {})
     data_folder_name = data.get('資料夾', selected_folder)
+
+    # 新增處理模特、平拍、細節的值
+    model_images_key = f"{selected_folder}_model_images"
+    flat_images_key = f"{selected_folder}_flat_images"
+    detail_images_key = f"{selected_folder}_detail_images"
+    model_images_value = st.session_state.get(model_images_key)
+    flat_images_value = st.session_state.get(flat_images_key)
+    detail_images_value = st.session_state.get(detail_images_key)
+
     st.session_state['folder_values'][data_folder_name] = {
         '張數': st.session_state[num_images_key],
-        '廣告圖': ad_images_value
+        '廣告圖': ad_images_value,
+        '模特': model_images_value,
+        '平拍': flat_images_value,
+        '細節': detail_images_value
     }
 
     # 記錄修改過的資料夾
@@ -1322,27 +1334,6 @@ def get_sort_key(image_file):
     # 如果圖片檔名未被修改，則返回原始檔名
     return image_file
 
-def get_system_font():
-    """
-    自動選擇系統上可用的內建字體。
-    """
-    font_candidates = [
-        "Verdana",
-        "Courier New",
-        "Georgia",
-        "Trebuchet MS",
-    ]
-
-    for font_name in font_candidates:
-        try:
-            # 嘗試加載每個候選字體
-            return ImageFont.truetype(font_name, 100)
-        except OSError:
-            continue
-
-    # 如果所有字體均不可用，則使用默認字體
-    return ImageFont.load_default()
-
 def add_png_label(image):
     """
     在圖片右上角加上放大版的 "PNG" 標示，使用實心黑體字。
@@ -1352,7 +1343,12 @@ def add_png_label(image):
         加上標示後的 Image 物件
     """
     draw = ImageDraw.Draw(image)
-    font = get_system_font()
+    try:
+        # 使用系統字體 Arial，大小設為 100
+        font = ImageFont.truetype("arial.ttf", 100)  # 請確認系統有安裝 Arial 字體
+    except OSError:
+        # 如果找不到 Arial 字體，使用 Noto Sans CJK 字體，適合中文系統
+        font = ImageFont.truetype("NotoSansCJK-Regular.ttc", 100)
 
     text = "PNG"
     # 使用 `textbbox` 取得文字邊界大小
@@ -1396,10 +1392,23 @@ with tab2:
                 else:
                     sheet_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
                     folder_to_row_idx = {}
+
+                # 新增讀取 '圖片類型統計' 工作表
+                if '圖片類型統計' in excel_sheets:
+                    type_sheet_df = excel_sheets['圖片類型統計']
+                    type_folder_to_row_idx = {}
+                    for idx, row in type_sheet_df.iterrows():
+                        folder_name = str(row['資料夾'])
+                        type_folder_to_row_idx[folder_name] = idx
+                else:
+                    type_sheet_df = pd.DataFrame(columns=['資料夾', '模特', '平拍', '細節'])
+                    type_folder_to_row_idx = {}
             else:
                 excel_sheets = {}
                 sheet_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
                 folder_to_row_idx = {}
+                type_sheet_df = pd.DataFrame(columns=['資料夾', '模特', '平拍', '細節'])
+                type_folder_to_row_idx = {}
 
             # 建立資料夾名稱與 '資料夾' 值的對應關係
             folder_to_data = {}
@@ -1414,18 +1423,37 @@ with tab2:
                     if data_folder_name in folder_name:
                         idx = folder_to_row_idx[data_folder_name]
                         row = sheet_df.loc[idx]
-                        folder_to_data[folder_name] = {
-                            '資料夾': data_folder_name,
-                            '張數': str(row['張數']),
-                            '廣告圖': str(row['廣告圖'])
-                        }
+                        # 新增對 '圖片類型統計' 的處理
+                        if data_folder_name in type_folder_to_row_idx:
+                            type_idx = type_folder_to_row_idx[data_folder_name]
+                            type_row = type_sheet_df.loc[type_idx]
+                            folder_to_data[folder_name] = {
+                                '資料夾': data_folder_name,
+                                '張數': str(row['張數']),
+                                '廣告圖': str(row['廣告圖']),
+                                '模特': str(type_row['模特']),
+                                '平拍': str(type_row['平拍']),
+                                '細節': str(type_row['細節'])
+                            }
+                        else:
+                            folder_to_data[folder_name] = {
+                                '資料夾': data_folder_name,
+                                '張數': str(row['張數']),
+                                '廣告圖': str(row['廣告圖']),
+                                '模特': '0',
+                                '平拍': '0',
+                                '細節': '0'
+                            }
                         matched = True
                         break
                 if not matched:
                     folder_to_data[folder_name] = {
                         '資料夾': folder_name,
                         '張數': '1',
-                        '廣告圖': '1'
+                        '廣告圖': '1',
+                        '模特': '0',
+                        '平拍': '0',
+                        '細節': '0'
                     }
 
             # 初始化 folder_values，確保所有資料夾都有初始值
@@ -1434,7 +1462,10 @@ with tab2:
                 if data_folder_name not in st.session_state['folder_values']:
                     st.session_state['folder_values'][data_folder_name] = {
                         '張數': data.get('張數', '1'),
-                        '廣告圖': data.get('廣告圖', '1')
+                        '廣告圖': data.get('廣告圖', '1'),
+                        '模特': data.get('模特', '0'),
+                        '平拍': data.get('平拍', '0'),
+                        '細節': data.get('細節', '0')
                     }
 
             if 'previous_selected_folder' not in st.session_state and top_level_folders:
@@ -1578,6 +1609,7 @@ with tab2:
 
 
                             # 顯示最外層資料夾圖片的 popover
+                            colA,colB,colC,colD,colE = st.columns(5)
                             col1, col2, col3 ,col4= st.columns([1.1,1.71,1.23, 1.23], vertical_alignment="center")
                             if outer_images_to_display:
                                 with col4.popover("查看外層圖片"):
@@ -1635,35 +1667,54 @@ with tab2:
                                 if data_folder_name and 'folder_values' in st.session_state and data_folder_name in st.session_state['folder_values']:
                                     num_images_default = st.session_state['folder_values'][data_folder_name]['張數']
                                     ad_images_default = st.session_state['folder_values'][data_folder_name]['廣告圖']
+                                    model_images_default = st.session_state['folder_values'][data_folder_name]['模特']
+                                    flat_images_default = st.session_state['folder_values'][data_folder_name]['平拍']
+                                    detail_images_default = st.session_state['folder_values'][data_folder_name]['細節']
                                 else:
                                     num_images_default = data.get('張數', '1')
                                     ad_images_default = data.get('廣告圖', '1')
-
+                                    model_images_default = data.get('模特', '0')
+                                    flat_images_default = data.get('平拍', '0')
+                                    detail_images_default = data.get('細節', '0')
+                            
                                 num_images_key = f"{selected_folder}_num_images"
                                 ad_images_key = f"{selected_folder}_ad_images"
+                                model_images_key = f"{selected_folder}_model_images"
+                                flat_images_key = f"{selected_folder}_flat_images"
+                                detail_images_key = f"{selected_folder}_detail_images"
+                            
                                 if num_images_key not in st.session_state:
                                     st.session_state[num_images_key] = num_images_default
-
+                            
                                 if ad_images_key not in st.session_state:
                                     st.session_state[ad_images_key] = ad_images_default
+                            
+                                if model_images_key not in st.session_state:
+                                    st.session_state[model_images_key] = model_images_default
+                            
+                                if flat_images_key not in st.session_state:
+                                    st.session_state[flat_images_key] = flat_images_default
+                            
+                                if detail_images_key not in st.session_state:
+                                    st.session_state[detail_images_key] = detail_images_default
+                            
                                 num_images_options = [str(i) for i in range(1, 11)]
                                 ad_images_options = [str(i) for i in range(1, 11)]
-                                if outer_images_to_display:
-                                    with col3.popover("編圖數/廣告圖"):
-                                        colA,colB = st.columns(2)
-                                        colA.selectbox('張數', num_images_options, index=num_images_options.index(str(st.session_state[num_images_key])), key=num_images_key)
-                                        colB.selectbox('廣告圖', ad_images_options, index=ad_images_options.index(str(st.session_state[ad_images_key])), key=ad_images_key)
-                                        st.warning('若有修改記得點擊 "暫存修改"')
-                                else:
-                                    with col4.popover("編圖數/廣告圖"):
-                                        colA,colB = st.columns(2)
-                                        colA.selectbox('張數', num_images_options, index=num_images_options.index(str(st.session_state[num_images_key])), key=num_images_key)
-                                        colB.selectbox('廣告圖', ad_images_options, index=ad_images_options.index(str(st.session_state[ad_images_key])), key=ad_images_key)
-                                        st.warning('若有修改記得點擊 "暫存修改"')
+                                type_images_options = [str(i) for i in range(0, 11)]
+                            
+                                colA.selectbox('張數', num_images_options, index=num_images_options.index(str(st.session_state[num_images_key])), key=num_images_key)
+                                colB.selectbox('廣告圖', ad_images_options, index=ad_images_options.index(str(st.session_state[ad_images_key])), key=ad_images_key)
+                            
+                                # 僅在 `2-IMG` 資料夾存在時顯示
+                                if use_full_filename:
+                                    colC.selectbox('模特', type_images_options, index=type_images_options.index(str(st.session_state[model_images_key])), key=model_images_key)
+                                    colD.selectbox('平拍', type_images_options, index=type_images_options.index(str(st.session_state[flat_images_key])), key=flat_images_key)
+                                    colE.selectbox('細節', type_images_options, index=type_images_options.index(str(st.session_state[detail_images_key])), key=detail_images_key)
                             else:
                                 num_images_key = None
                                 ad_images_key = None
                                 folder_to_data = None
+
 
                             col1.form_submit_button(
                                 "暫存修改",
@@ -1765,6 +1816,40 @@ with tab2:
                                             # 更新 excel_sheets
                                             excel_sheets['編圖張數與廣告圖'] = result_df
 
+                                            # 處理 '圖片類型統計' 工作表
+                                            type_result_df = excel_sheets.get('圖片類型統計', pd.DataFrame(columns=['資料夾', '模特', '平拍', '細節']))
+
+                                            # 更新所有資料夾的 '模特'、'平拍'、'細節' 值
+                                            for idx, row in type_result_df.iterrows():
+                                                data_folder_name = str(row['資料夾'])
+                                                if data_folder_name in st.session_state['folder_values']:
+                                                    model_images = st.session_state['folder_values'][data_folder_name]['模特']
+                                                    flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
+                                                    detail_images = st.session_state['folder_values'][data_folder_name]['細節']
+
+                                                    type_result_df.at[idx, '模特'] = model_images
+                                                    type_result_df.at[idx, '平拍'] = flat_images
+                                                    type_result_df.at[idx, '細節'] = detail_images
+
+                                            # 如果有新的資料夾沒有在原始 Excel 中，添加它們
+                                            existing_type_folders = set(type_result_df['資料夾'])
+                                            for data_folder_name in st.session_state['folder_values']:
+                                                if data_folder_name not in existing_type_folders:
+                                                    model_images = st.session_state['folder_values'][data_folder_name]['模特']
+                                                    flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
+                                                    detail_images = st.session_state['folder_values'][data_folder_name]['細節']
+
+                                                    new_row = pd.DataFrame([{
+                                                        '資料夾': data_folder_name,
+                                                        '模特': model_images,
+                                                        '平拍': flat_images,
+                                                        '細節': detail_images
+                                                    }])
+                                                    type_result_df = pd.concat([type_result_df, new_row], ignore_index=True)
+
+                                            # 更新 excel_sheets
+                                            excel_sheets['圖片類型統計'] = type_result_df
+
                                             # 寫入所有工作表
                                             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                                                 for sheet_name, df in excel_sheets.items():
@@ -1772,6 +1857,7 @@ with tab2:
                                         else:
                                             # 如果上傳的檔案中沒有 '編圖結果.xlsx'
                                             result_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
+                                            type_result_df = pd.DataFrame(columns=['資料夾', '模特', '平拍', '細節'])
                                             for data_folder_name in st.session_state['folder_values']:
                                                 num_images = st.session_state['folder_values'][data_folder_name]['張數']
                                                 ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
@@ -1782,8 +1868,20 @@ with tab2:
                                                     '廣告圖': ad_images
                                                 }])
                                                 result_df = pd.concat([result_df, new_row], ignore_index=True)
+
+                                                model_images = st.session_state['folder_values'][data_folder_name]['模特']
+                                                flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
+                                                detail_images = st.session_state['folder_values'][data_folder_name]['細節']
+                                                new_type_row = pd.DataFrame([{
+                                                    '資料夾': data_folder_name,
+                                                    '模特': model_images,
+                                                    '平拍': flat_images,
+                                                    '細節': detail_images
+                                                }])
+                                                type_result_df = pd.concat([type_result_df, new_type_row], ignore_index=True)
                                             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                                                 result_df.to_excel(writer, index=False, sheet_name='編圖張數與廣告圖')
+                                                type_result_df.to_excel(writer, index=False, sheet_name='圖片類型統計')
 
                                         # 將 '編圖結果.xlsx' 加入 zip，覆蓋原始檔案
                                         excel_buffer.seek(0)
@@ -1804,3 +1902,4 @@ with tab2:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
+
