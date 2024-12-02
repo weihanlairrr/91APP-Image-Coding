@@ -215,23 +215,29 @@ def unzip_file(uploaded_zip):
             
 def get_images_in_folder(folder_path):
     """
-    獲取指定資料夾中的所有圖像檔案。
+    獲取指定資料夾中的所有圖像檔案，並判斷是否使用 2-IMG 的邏輯。
     參數:
         folder_path: 資料夾的路徑
     回傳:
-        圖像檔案的相對路徑和完整路徑的列表
+        圖像檔案的相對路徑和完整路徑的列表，以及是否使用 2-IMG 的邏輯
     """
     image_files = []
     two_img_folder_path = os.path.join(folder_path, '2-IMG')
-    st.session_state["use_two_img_folder"] = False
+    ads_folder_path = os.path.join(folder_path, '1-Main/All')
+    use_two_img_folder = False
 
-    # 確認是否存在 2-IMG 資料夾，並設定狀態
     if os.path.exists(two_img_folder_path) and os.path.isdir(two_img_folder_path):
-        st.session_state["use_two_img_folder"] = True
+        use_two_img_folder = True
         # 只處理 '2-IMG' 資料夾內的圖片
         for file in os.listdir(two_img_folder_path):
             if file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
                 full_image_path = os.path.join(two_img_folder_path, file)
+                relative_image_path = os.path.relpath(full_image_path, folder_path)
+                image_files.append((relative_image_path, full_image_path))
+    elif os.path.exists(ads_folder_path) and os.path.isdir(ads_folder_path):
+        for file in os.listdir(ads_folder_path):
+            if file.lower().endswith(('.jpg', '.jpeg', '.png', '.bmp', '.gif')):
+                full_image_path = os.path.join(ads_folder_path, file)
                 relative_image_path = os.path.relpath(full_image_path, folder_path)
                 image_files.append((relative_image_path, full_image_path))
     else:
@@ -246,9 +252,9 @@ def get_images_in_folder(folder_path):
                     full_image_path = os.path.join(root, file)
                     relative_image_path = os.path.relpath(full_image_path, folder_path)
                     image_files.append((relative_image_path, full_image_path))
-    return image_files
+    return image_files, use_two_img_folder
 
-def rename_numbers_in_folder(results):
+def rename_numbers_in_folder(results, starting_number):
     """
     根據編號重新命名資料夾中的圖像檔案。
     參數:
@@ -266,18 +272,19 @@ def rename_numbers_in_folder(results):
         folder_results.sort(key=lambda x: int(x["編號"]))
         for idx, result in enumerate(folder_results):
             if idx < label_limit:
-                result["編號"] = f'{idx+1:02}'  # 編號格式為兩位數
+                result["編號"] = f'{starting_number + idx:02}'  # 根據起始編號進行編碼
             else:
                 result["編號"] = "超過上限"  # 超過編號上限時標記
     return results
 
-def rename_and_zip_folders(results, output_excel_data, skipped_images):
+def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_settings):
     """
     重新命名圖像檔案並壓縮處理後的資料夾和結果 Excel 檔。
     參數:
         results: 圖像處理的結果列表
         output_excel_data: 結果的 Excel 資料
         skipped_images: 被跳過的圖像列表
+        folder_settings: 每個資料夾是否使用 2-IMG 的邏輯
     回傳:
         壓縮檔的二進位數據
     """
@@ -297,7 +304,9 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
 
         # 設定主資料夾路徑
         folder_path = os.path.join(output_folder_path, folder_name)
-        if "use_two_img_folder" in st.session_state and st.session_state["use_two_img_folder"]:
+        use_two_img_folder = folder_settings.get(folder_name, False)  # 根據該資料夾的設置
+
+        if use_two_img_folder:
             main_folder_structure = "2-IMG"
         else:
             main_folder_structure = "1-Main/All"
@@ -307,8 +316,15 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         old_image_path = os.path.join(folder_path, image_file)
         file_extension = os.path.splitext(image_file)[1]  # 取得原始檔案的副檔名
 
-        # 如果編號超過上限或為空，將圖片保留在最外層資料夾
-        if new_number == "超過上限" or pd.isna(new_number):
+        # 如果是 2-IMG 資料夾且 "超過上限" 或符合跳過的檔名條件，保留原樣
+        if (
+            use_two_img_folder
+            and (new_number == "超過上限" or any(keyword in image_file for keyword in keywords_to_skip))
+        ):
+            # 不進行移動或修改
+            new_image_path = old_image_path
+        elif new_number == "超過上限" or pd.isna(new_number):
+            # 一般情況下，將圖片保留在最外層資料夾
             new_image_path = os.path.join(folder_path, os.path.basename(image_file))
         else:
             new_image_name = f"{prefix}_{new_number}{file_extension}"  # 使用指定前綴或資料夾名稱
@@ -316,27 +332,36 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
 
         os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
 
-        if os.path.exists(old_image_path):
+        if os.path.exists(old_image_path) and old_image_path != new_image_path:
             os.rename(old_image_path, new_image_path)  # 重新命名或移動圖像檔案
 
-    # 處理 skipped_images，將其移動到最外層資料夾
+    # 處理 skipped_images，將其移動到最外層資料夾（僅當非 2-IMG）
     for skipped in skipped_images:
         folder_name = skipped["資料夾"]
         image_file = skipped["圖片"]
 
         folder_path = os.path.join(output_folder_path, folder_name)
         old_image_path = os.path.join(folder_path, image_file)
-        new_image_path = os.path.join(folder_path, os.path.basename(image_file))  # 保留在最外層資料夾
 
-        if os.path.exists(old_image_path):
-            os.rename(old_image_path, new_image_path)  # 移動到最外層
+        use_two_img_folder = folder_settings.get(folder_name, False)
+
+        if not use_two_img_folder:
+            new_image_path = os.path.join(folder_path, os.path.basename(image_file))  # 保留在最外層資料夾
+
+            if os.path.exists(old_image_path):
+                os.rename(old_image_path, new_image_path)  # 移動到最外層
 
     zip_buffer = BytesIO()  # 創建內存中的緩衝區
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
         for folder in os.listdir("uploaded_images"):
             folder_path = os.path.join("uploaded_images", folder)
             if os.path.isdir(folder_path):
-                new_folder_name = f"{folder}_OK"  # 新的資料夾名稱
+                use_two_img_folder = folder_settings.get(folder, False)
+                if use_two_img_folder:
+                    new_folder_name = folder  # 不添加 "_OK"
+                else:
+                    new_folder_name = f"{folder}_OK"  # 添加 "_OK"
+
                 new_folder_path = os.path.join("uploaded_images", new_folder_name)
                 os.rename(folder_path, new_folder_path)  # 重新命名資料夾
 
@@ -348,6 +373,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images):
         zipf.writestr("編圖結果.xlsx", output_excel_data)  # 添加結果 Excel 檔到壓縮檔
 
     return zip_buffer.getvalue()  # 返回壓縮檔的二進位數據
+
 
 def category_match(image_files, keywords, match_all):
     """
@@ -419,7 +445,6 @@ with tab1:
         "ADS": {
             "train_file": "dependencies/image_features.pkl",
             "angle_filename_reference": "dependencies/ADS檔名角度對照表.xlsx",
-            "label_limit": 10,
         },
     }
     
@@ -448,7 +473,10 @@ with tab1:
         dependencies = brand_dependencies[selected_brand]
         train_file = dependencies["train_file"]
         angle_filename_reference = dependencies["angle_filename_reference"]
-        label_limit = dependencies["label_limit"]
+        
+        settings_df = pd.read_excel(angle_filename_reference, sheet_name="基本設定", header=None)
+        label_limit = int(settings_df.loc[settings_df.iloc[:, 0].astype(str).str.strip() == "主圖上限", 1].values[0])
+        starting_number = int(settings_df.loc[settings_df.iloc[:, 0].astype(str).str.strip() == "編圖起始號碼", 1].values[0])
         
         keywords_to_skip = pd.read_excel(angle_filename_reference, sheet_name='移到外層的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
         substitute_df = pd.read_excel(angle_filename_reference, sheet_name='有條件使用的檔名', usecols=[0, 1])
@@ -536,6 +564,8 @@ with tab1:
     
         # set_b 只有在 set_a 不存在時才能使用，否則需要被移到外層資料夾
         group_conditions = substitute
+
+        folder_settings = {}  # 存儲每個資料夾是否使用 2-IMG 的邏輯
     
         # 遍歷每個圖像資料夾進行處理
         for folder in image_folders:
@@ -543,7 +573,9 @@ with tab1:
             features_by_category = {k: v.copy() for k, v in original_features_by_category.items()}
     
             folder_path = os.path.join("uploaded_images", folder)
-            image_files = get_images_in_folder(folder_path)  # 獲取資料夾中的圖像檔案
+            image_files, use_two_img_folder = get_images_in_folder(folder_path)  # 獲取資料夾中的圖像檔案
+            folder_settings[folder] = use_two_img_folder  # 存儲該資料夾的設定
+
             if not image_files:
                 st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
                 continue
@@ -969,7 +1001,7 @@ with tab1:
         progress_text.empty()
 
         # 根據編號重新命名圖像
-        results = rename_numbers_in_folder(results)
+        results = rename_numbers_in_folder(results, starting_number)
 
         # 將結果轉換為 DataFrame 並顯示在頁面上
         result_df = pd.DataFrame(results)
@@ -1010,7 +1042,7 @@ with tab1:
 
 
         # 重新命名並壓縮資料夾和結果 Excel 檔案
-        zip_data = rename_and_zip_folders(results, excel_data, skipped_images)
+        zip_data = rename_and_zip_folders(results, excel_data, skipped_images, folder_settings)
         uploaded_zip_name = os.path.splitext(uploaded_zip.name)[0]  
         
         # 刪除上傳的圖像資料夾和臨時壓縮檔
@@ -1026,7 +1058,6 @@ with tab1:
             on_click=reset_file_uploader
         ):
             st.rerun()  
-
 
 #%% 編圖複檢
 def initialize_tab2():
