@@ -1278,8 +1278,6 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
             text_input_key = f"{selected_folder}_{file}"
             st.session_state[text_input_key] = data['text']
 
-    # 調整張數值，考慮 removed 和 modified_outer_count
-    num_images_key = f"{selected_folder}_num_images"
     if num_images_key in st.session_state:
         current_num_images = int(st.session_state[num_images_key])
         # 減去被移除的數量，增加修改的 outer images 數量
