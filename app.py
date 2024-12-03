@@ -254,11 +254,13 @@ def get_images_in_folder(folder_path):
                     image_files.append((relative_image_path, full_image_path))
     return image_files, use_two_img_folder
 
-def rename_numbers_in_folder(results, starting_number):
+def rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers):
     """
     根據編號重新命名資料夾中的圖像檔案。
     參數:
         results: 圖像處理的結果列表
+        folder_label_limits: 每個資料夾的主圖上限字典
+        folder_start_numbers: 每個資料夾的起始編號字典
     回傳:
         更新後的結果列表
     """
@@ -270,6 +272,8 @@ def rename_numbers_in_folder(results, starting_number):
             continue
         # 按照編號排序
         folder_results.sort(key=lambda x: int(x["編號"]))
+        label_limit = folder_label_limits.get(folder, 10)  # 默認為10
+        starting_number = folder_start_numbers.get(folder, 1)  # 默認為1
         for idx, result in enumerate(folder_results):
             if idx < label_limit:
                 result["編號"] = f'{starting_number + idx:02}'  # 根據起始編號進行編碼
@@ -474,11 +478,16 @@ with tab1:
         train_file = dependencies["train_file"]
         angle_filename_reference = dependencies["angle_filename_reference"]
         
-        settings_df = pd.read_excel(angle_filename_reference, sheet_name="基本設定", header=None)
-        label_limit = int(settings_df.loc[settings_df.iloc[:, 0].astype(str).str.strip() == "主圖上限", 1].values[0])
-        starting_number = int(settings_df.loc[settings_df.iloc[:, 0].astype(str).str.strip() == "編圖起始號碼", 1].values[0])
+        # 讀取基本設定
+        category_settings_df = pd.read_excel(angle_filename_reference, sheet_name="基本設定")
+        category_label_limits = dict(zip(category_settings_df.iloc[:, 0], category_settings_df.iloc[:, 1]))
+        category_start_numbers = dict(zip(category_settings_df.iloc[:, 0], category_settings_df.iloc[:, 2]))
         
-        keywords_to_skip = pd.read_excel(angle_filename_reference, sheet_name='移到外層的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
+        # 讀取 "其他" 的設定值
+        other_label_limit = category_label_limits.get("其他", 10)
+        other_start_number = category_start_numbers.get("其他", 1)
+        
+        keywords_to_skip = pd.read_excel(angle_filename_reference, sheet_name='不編的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
         substitute_df = pd.read_excel(angle_filename_reference, sheet_name='有條件使用的檔名', usecols=[0, 1])
         substitute = [{"set_a": row.iloc[0].split(','), "set_b": row.iloc[1].split(',')} for _, row in substitute_df.iterrows()]
         
@@ -564,8 +573,10 @@ with tab1:
     
         # set_b 只有在 set_a 不存在時才能使用，否則需要被移到外層資料夾
         group_conditions = substitute
-
+    
         folder_settings = {}  # 存儲每個資料夾是否使用 2-IMG 的邏輯
+        folder_label_limits = {}  # 存儲每個資料夾的主圖上限
+        folder_start_numbers = {}  # 存儲每個資料夾的起始編號
     
         # 遍歷每個圖像資料夾進行處理
         for folder in image_folders:
@@ -737,6 +748,21 @@ with tab1:
 
             # 初始化規則標誌
             rule_flags = [False for _ in angle_banning_rules]
+
+            # 根據分類設定 label_limit 和 starting_number
+            if best_category["category"] in category_label_limits:
+                label_limit = int(category_label_limits[best_category["category"]])
+            else:
+                label_limit = int(other_label_limit)
+
+            if best_category["category"] in category_start_numbers:
+                starting_number = int(category_start_numbers[best_category["category"]])
+            else:
+                starting_number = int(other_start_number)
+
+            # 記錄該資料夾的主圖上限和起始編號
+            folder_label_limits[folder] = label_limit
+            folder_start_numbers[folder] = starting_number
 
             # 遍歷每個圖像資料進行角度分配
             for img_data in folder_features:
@@ -1001,7 +1027,7 @@ with tab1:
         progress_text.empty()
 
         # 根據編號重新命名圖像
-        results = rename_numbers_in_folder(results, starting_number)
+        results = rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers)
 
         # 將結果轉換為 DataFrame 並顯示在頁面上
         result_df = pd.DataFrame(results)
@@ -1900,4 +1926,3 @@ with tab2:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
-
