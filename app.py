@@ -254,34 +254,51 @@ def get_images_in_folder(folder_path):
                     image_files.append((relative_image_path, full_image_path))
     return image_files, use_two_img_folder
 
-def rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers):
+def rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers, angle_to_prefix):
     """
-    根據編號重新命名資料夾中的圖像檔案。
+    根據編號重新命名資料夾中的圖像檔案，並根據前綴獨立編號。
     參數:
         results: 圖像處理的結果列表
         folder_label_limits: 每個資料夾的主圖上限字典
         folder_start_numbers: 每個資料夾的起始編號字典
+        angle_to_prefix: 角度與指定前綴的對應字典
     回傳:
         更新後的結果列表
     """
     folders = set([result["資料夾"] for result in results])  # 獲取所有資料夾名稱
     for folder in folders:
         folder_results = [r for r in results if r["資料夾"] == folder]
-        # 檢查是否有未編號的圖像
-        if any(pd.isna(r["編號"]) or r["編號"] == "" for r in folder_results):
-            continue
-        # 按照編號排序
-        folder_results.sort(key=lambda x: int(x["編號"]))
-        label_limit = folder_label_limits.get(folder, 10)  # 默認為10
-        starting_number = folder_start_numbers.get(folder, 1)  # 默認為1
-        for idx, result in enumerate(folder_results):
-            if idx < label_limit:
-                result["編號"] = f'{starting_number + idx:02}'  # 根據起始編號進行編碼
-            else:
-                result["編號"] = "超過上限"  # 超過編號上限時標記
+        # 針對不同的前綴進行分組
+        prefix_groups = defaultdict(list)
+        for result in folder_results:
+            angle = result["角度"]
+            category = result["商品分類"]
+            # 檢查指定前綴的適用性
+            specified_prefix = angle_to_prefix.get((angle, category))
+            if specified_prefix is None:
+                specified_prefix = angle_to_prefix.get((angle, None))
+            prefix = specified_prefix if specified_prefix else folder
+            result["前綴"] = prefix  # 暫時添加前綴到結果中，方便處理
+            prefix_groups[prefix].append(result)
+        for prefix, prefix_results in prefix_groups.items():
+            # 檢查是否有未編號的圖像
+            if any(pd.isna(r["編號"]) or r["編號"] == "" for r in prefix_results):
+                continue
+            # 按照編號排序
+            prefix_results.sort(key=lambda x: int(x["編號"]))
+            label_limit = folder_label_limits.get(prefix, 10)  # 默認為10
+            starting_number = folder_start_numbers.get(prefix, 1)  # 默認為1
+            for idx, result in enumerate(prefix_results):
+                if idx < label_limit:
+                    result["編號"] = f'{starting_number + idx:02}'  # 根據起始編號進行編碼
+                else:
+                    result["編號"] = "超過上限"  # 超過編號上限時標記
+            # 移除臨時添加的前綴欄位
+            for result in prefix_results:
+                del result["前綴"]
     return results
 
-def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_settings):
+def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_settings, angle_to_prefix):
     """
     重新命名圖像檔案並壓縮處理後的資料夾和結果 Excel 檔。
     參數:
@@ -289,6 +306,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
         output_excel_data: 結果的 Excel 資料
         skipped_images: 被跳過的圖像列表
         folder_settings: 每個資料夾是否使用 2-IMG 的邏輯
+        angle_to_prefix: 角度與指定前綴的對應字典
     回傳:
         壓縮檔的二進位數據
     """
@@ -298,12 +316,14 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
         folder_name = result["資料夾"]
         image_file = result["圖片"]
         new_number = result["編號"]
-        angle = result["角度"]  # 新增：獲取分配的角度
+        angle = result["角度"]  # 獲取分配的角度
+        category = result["商品分類"]  # 獲取商品分類
 
-        # 查找是否有指定前綴
-        specified_prefix = angle_to_prefix.get(angle, None)
+        # 檢查指定前綴的適用性
+        specified_prefix = angle_to_prefix.get((angle, category))
+        if specified_prefix is None:
+            specified_prefix = angle_to_prefix.get((angle, None))
 
-        # 確定前綴：如果有指定前綴，使用它；否則使用資料夾名稱
         prefix = specified_prefix if specified_prefix else folder_name
 
         # 設定主資料夾路徑
@@ -377,7 +397,6 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
         zipf.writestr("編圖結果.xlsx", output_excel_data)  # 添加結果 Excel 檔到壓縮檔
 
     return zip_buffer.getvalue()  # 返回壓縮檔的二進位數據
-
 
 def category_match(image_files, keywords, match_all):
     """
@@ -555,8 +574,8 @@ with tab1:
 
                 # 建立角度與指定前綴的對應
                 for a in angles:
-                    angle_to_prefix[a] = prefix
-    
+                    angle_to_prefix[(a, category)] = prefix  # 修改為以 (angle, category) 作為鍵
+        
         # 獲取所有上傳的圖像資料夾
         image_folders = [
             f for f in os.listdir("uploaded_images") 
@@ -575,8 +594,8 @@ with tab1:
         group_conditions = substitute
     
         folder_settings = {}  # 存儲每個資料夾是否使用 2-IMG 的邏輯
-        folder_label_limits = {}  # 存儲每個資料夾的主圖上限
-        folder_start_numbers = {}  # 存儲每個資料夾的起始編號
+        folder_label_limits = {}  # 存儲每個前綴的主圖上限
+        folder_start_numbers = {}  # 存儲每個前綴的起始編號
     
         # 遍歷每個圖像資料夾進行處理
         for folder in image_folders:
@@ -760,10 +779,6 @@ with tab1:
             else:
                 starting_number = int(other_start_number)
 
-            # 記錄該資料夾的主圖上限和起始編號
-            folder_label_limits[folder] = label_limit
-            folder_start_numbers[folder] = starting_number
-
             # 遍歷每個圖像資料進行角度分配
             for img_data in folder_features:
                 image_file = img_data["image_file"]
@@ -773,7 +788,7 @@ with tab1:
                 best_angle = None
 
                 if special_angles:
-                    # 過濾有效的特殊角度
+                    # 過濾有效的特殊角度（精確匹配）
                     valid_special_angles = [
                         angle for angle in special_angles 
                         if angle in angle_to_number
@@ -832,6 +847,7 @@ with tab1:
                                     "角度": best_angle,
                                     "編號": angle_to_number[best_angle],
                                     "最大相似度": f"{best_similarity:.2f}%"
+                                    # 不新增 "前綴" 欄位
                                 }
                                 final_results[image_file] = label_info
                                 # 更新規則標誌
@@ -860,6 +876,7 @@ with tab1:
                                     "角度": special_angle,
                                     "編號": angle_to_number[special_angle],
                                     "最大相似度": "100.00%"
+                                    # 不新增 "前綴" 欄位
                                 }
                                 final_results[image_file] = label_info
                                 # 更新規則標誌
@@ -949,7 +966,7 @@ with tab1:
                         if is_banned_angle(candidate_angle, rule_flags):
                             continue
                         
-                        if candidate_angle in reassigned_allowed or candidate_angle not in used_angles:
+                        if candidate_angle not in reassigned_allowed or candidate_angle not in used_angles:
                             candidate = candidate_candidate
                             break
                     else:
@@ -975,6 +992,7 @@ with tab1:
                                 "角度": angle,
                                 "編號": candidate["label"]["number"],
                                 "最大相似度": f"{candidate['similarity']:.2f}%"
+                                # 不新增 "前綴" 欄位
                             }
                             assigned_in_this_round.add(image_file)
                     elif len(images) == 1:
@@ -987,6 +1005,7 @@ with tab1:
                             "角度": angle,
                             "編號": candidate["label"]["number"],
                             "最大相似度": f"{candidate['similarity']:.2f}%"
+                            # 不新增 "前綴" 欄位
                         }
                         used_angles.add(angle)  # 標記角度為已使用
                         assigned_in_this_round.add(image_file)
@@ -1006,6 +1025,7 @@ with tab1:
                             "角度": angle,
                             "編號": candidate["label"]["number"],
                             "最大相似度": f"{candidate['similarity']:.2f}%"
+                            # 不新增 "前綴" 欄位
                         }
                         used_angles.add(angle)  # 標記角度為已使用
                         assigned_in_this_round.add(best_image)
@@ -1027,7 +1047,7 @@ with tab1:
         progress_text.empty()
 
         # 根據編號重新命名圖像
-        results = rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers)
+        results = rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers, angle_to_prefix)
 
         # 將結果轉換為 DataFrame 並顯示在頁面上
         result_df = pd.DataFrame(results)
@@ -1066,9 +1086,8 @@ with tab1:
             image_type_statistics_df.to_excel(writer, sheet_name='圖片類型統計', index=False)
         excel_data = excel_buffer.getvalue()
 
-
         # 重新命名並壓縮資料夾和結果 Excel 檔案
-        zip_data = rename_and_zip_folders(results, excel_data, skipped_images, folder_settings)
+        zip_data = rename_and_zip_folders(results, excel_data, skipped_images, folder_settings, angle_to_prefix)
         uploaded_zip_name = os.path.splitext(uploaded_zip.name)[0]  
         
         # 刪除上傳的圖像資料夾和臨時壓縮檔
@@ -1332,7 +1351,6 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
 
     # 記錄修改過的資料夾
     st.session_state['modified_folders'].add(data_folder_name)
-
 
 @functools.lru_cache(maxsize=512)
 def get_sort_key(image_file):
