@@ -178,14 +178,27 @@ def l2_normalize(vectors):
     """
     norms = np.linalg.norm(vectors, axis=1, keepdims=True)
     return vectors / norms
+    
+def handle_file_uploader_change():
+    """當 file uploader 狀態變化時更新 text area disabled 屬性"""
+    file_key = 'file_uploader_' + str(st.session_state.get('file_uploader_key1', 0))
+    uploaded_file = st.session_state.get(file_key, None)
+    st.session_state.text_area_disabled = bool(uploaded_file)
 
-def reset_file_uploader():
+def handle_text_area_change():
+    """當 text area 狀態變化時更新 file uploader disabled 屬性"""
+    text_key = 'text_area_' + str(st.session_state.get('text_area_key1', 0))
+    text_content = st.session_state.get(text_key, "")
+    st.session_state.file_uploader_disabled = bool(text_content)
+            
+def reset_key_tab1():
     """
     重置文件上傳器的狀態，並刪除上傳的圖像和臨時壓縮檔。
     """
     st.session_state['file_uploader_key1'] += 1 
-    st.session_state['file_uploader_key2'] += 1
-    st.session_state['filename_changes'].clear()  # 清空檔名變更的緩存
+    st.session_state['text_area_key1'] += 1 
+    st.session_state['file_uploader_disabled'] = False
+    st.session_state['text_area_disabled'] = False
 
 def unzip_file(uploaded_zip):
     """
@@ -254,14 +267,16 @@ def get_images_in_folder(folder_path):
                     image_files.append((relative_image_path, full_image_path))
     return image_files, use_two_img_folder
 
-def rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers, angle_to_prefix):
+def rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers, angle_to_prefix, category_label_limits, category_start_numbers):
     """
     根據編號重新命名資料夾中的圖像檔案，並根據前綴獨立編號。
     參數:
         results: 圖像處理的結果列表
-        folder_label_limits: 每個資料夾的主圖上限字典
-        folder_start_numbers: 每個資料夾的起始編號字典
+        folder_label_limits: 每個前綴的主圖上限字典
+        folder_start_numbers: 每個前綴的起始編號字典
         angle_to_prefix: 角度與指定前綴的對應字典
+        category_label_limits: 商品分類的主圖上限字典
+        category_start_numbers: 商品分類的起始編號字典
     回傳:
         更新後的結果列表
     """
@@ -286,8 +301,15 @@ def rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers,
                 continue
             # 按照編號排序
             prefix_results.sort(key=lambda x: int(x["編號"]))
-            label_limit = folder_label_limits.get(prefix, 10)  # 默認為10
-            starting_number = folder_start_numbers.get(prefix, 1)  # 默認為1
+            # 獲取該前綴對應的商品分類
+            category = None
+            for r in prefix_results:
+                if r["商品分類"]:
+                    category = r["商品分類"]
+                    break
+            # 根據商品分類獲取 label_limit 和 starting_number
+            label_limit = int(category_label_limits.get(category, other_label_limit))
+            starting_number = int(category_start_numbers.get(category, other_start_number))
             for idx, result in enumerate(prefix_results):
                 if idx < label_limit:
                     result["編號"] = f'{starting_number + idx:02}'  # 根據起始編號進行編碼
@@ -459,7 +481,7 @@ def generate_image_type_statistics(results):
     return pd.DataFrame(statistics)
 
 #%% 自動編圖介面
-tab1, tab2 = st.tabs([" 自動編圖 ", " 編圖複檢 "])
+tab1, tab2, tab3 = st.tabs(["自動編圖", "編圖複檢", "覆蓋舊檔案與刪外層圖"])
 with tab1:
     resnet = load_resnet_model()
     preprocess = get_preprocess_transforms()
@@ -470,27 +492,54 @@ with tab1:
             "angle_filename_reference": "dependencies/ADS檔名角度對照表.xlsx",
         },
     }
-    
+
+    # 初始化 session state
     if 'file_uploader_key1' not in st.session_state:
         st.session_state['file_uploader_key1'] = 0
-        
+    if 'text_area_key1' not in st.session_state:
+        st.session_state['text_area_key1'] = 0
+    if 'file_uploader_disabled' not in st.session_state:
+        st.session_state['file_uploader_disabled'] = False
+    if 'text_area_disabled' not in st.session_state:
+        st.session_state['text_area_disabled'] = False
+    if 'text_area_content' not in st.session_state:
+        st.session_state['text_area_content'] = ""
+
     brand_list = list(brand_dependencies.keys())
     st.write("\n")
-    uploaded_zip = st.file_uploader(
-        "上傳 Zip 檔案", 
-        type=["zip"], 
-        key='file_uploader_' + str(st.session_state['file_uploader_key1'])
+    col1, col2 = st.columns([1.6, 1])
+
+    # 檔案上傳元件
+    uploaded_zip = col1.file_uploader(
+        "上傳 ZIP 檔案",
+        type=["zip"],
+        key='file_uploader_' + str(st.session_state['file_uploader_key1']),
+        disabled=st.session_state['file_uploader_disabled'],
+        on_change=handle_file_uploader_change
     )
-  
-    if uploaded_zip:
-        col1,col2,col3 = st.columns([1.5,2,2],vertical_alignment="center",gap="medium")
+
+    # 資料夾路徑輸入元件
+    input_path = col2.text_area(
+        "或 輸入資料夾路徑",
+        height=78,
+        key='text_area_' + str(st.session_state['text_area_key1']),
+        disabled=st.session_state['text_area_disabled'],
+        on_change=handle_text_area_change
+    )
+
+    start_running = False
+    if input_path:
+        st.session_state["input_path_from_tab1"] = input_path  # 儲存路徑
+
+    if uploaded_zip or input_path:
+        col1, col2, col3 = st.columns([1.5, 2, 2], vertical_alignment="center", gap="medium")
         selectbox_placeholder = col1.empty()
         button_placeholder = col2.empty()
         with selectbox_placeholder:
             selected_brand = st.selectbox(
                 "請選擇品牌", brand_list, label_visibility="collapsed")
         with button_placeholder:
-            start_running = st.button("開始執行")  
+            start_running = st.button("開始執行")
 
 #%% 自動編圖邏輯            
         dependencies = brand_dependencies[selected_brand]
@@ -522,24 +571,33 @@ with tab1:
         # 複製一份原始特徵資料，避免在處理時修改到原始資料
         original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
 
-    if uploaded_zip and start_running:
+    if (uploaded_zip or input_path) and start_running:
         selectbox_placeholder.empty()
         button_placeholder.empty()
 
         if os.path.exists("uploaded_images"):
             shutil.rmtree("uploaded_images")
             
-        # 將上傳的 zip 檔案寫入臨時檔案
-        with open("temp.zip", "wb") as f:
-            f.write(uploaded_zip.getbuffer())
-    
-        # 解壓上傳的 zip 檔案
-        unzip_file("temp.zip")
-    
+        if uploaded_zip:
+            # 將上傳的 zip 檔案寫入臨時檔案
+            with open("temp.zip", "wb") as f:
+                f.write(uploaded_zip.getbuffer())
+        
+            # 解壓上傳的 zip 檔案
+            unzip_file("temp.zip")
+        elif input_path:
+            # 複製 input_path 下的所有資料夾到 'uploaded_images' 資料夾
+            if not os.path.exists(input_path):
+                st.error("指定的本地路徑不存在，請重新輸入。")
+                st.stop()
+            else:
+                shutil.copytree(input_path, "uploaded_images")
+
         # 初始化特殊映射字典
         special_mappings = {}
         # 建立角度與指定前綴的對應關係
         angle_to_prefix = {}
+        prefix_to_category = {}  # 初始化 prefix_to_category
 
         if selected_brand == "ADS":
             # 讀取特定品牌的檔名角度對照表
@@ -575,7 +633,32 @@ with tab1:
                 # 建立角度與指定前綴的對應
                 for a in angles:
                     angle_to_prefix[(a, category)] = prefix  # 修改為以 (angle, category) 作為鍵
+
+                # 新增此行：建立 prefix_to_category 映射
+                if prefix:
+                    prefix_to_category[prefix] = category
         
+        # 新增：建立 folder_label_limits 和 folder_start_numbers
+        folder_label_limits = {}
+        folder_start_numbers = {}
+
+        for prefix, category in prefix_to_category.items():
+            label_limit = category_label_limits.get(category, other_label_limit)
+            starting_number = category_start_numbers.get(category, other_start_number)
+            folder_label_limits[prefix] = int(label_limit)
+            folder_start_numbers[prefix] = int(starting_number)
+
+        # 以下新增：處理沒有指定前綴的情況，使用對應的商品分類設定
+        # 如果有資料夾名稱作為前綴，且未在 folder_label_limits 中，則嘗試從商品分類獲取設定
+        all_prefixes = set(prefix_to_category.keys())
+        for folder in os.listdir("uploaded_images"):
+            if folder not in all_prefixes:
+                # 嘗試從商品分類中獲取設定
+                label_limit = category_label_limits.get(folder, other_label_limit)
+                starting_number = category_start_numbers.get(folder, other_start_number)
+                folder_label_limits[folder] = int(label_limit)
+                folder_start_numbers[folder] = int(starting_number)
+
         # 獲取所有上傳的圖像資料夾
         image_folders = [
             f for f in os.listdir("uploaded_images") 
@@ -594,9 +677,7 @@ with tab1:
         group_conditions = substitute
     
         folder_settings = {}  # 存儲每個資料夾是否使用 2-IMG 的邏輯
-        folder_label_limits = {}  # 存儲每個前綴的主圖上限
-        folder_start_numbers = {}  # 存儲每個前綴的起始編號
-    
+
         # 遍歷每個圖像資料夾進行處理
         for folder in image_folders:
             # 每次處理新資料夾前，重置 features_by_category
@@ -778,6 +859,32 @@ with tab1:
                 starting_number = int(category_start_numbers[best_category["category"]])
             else:
                 starting_number = int(other_start_number)
+
+            # 以下新增：為每個資料夾的前綴設定 label_limit 和 starting_number
+            # 取得此資料夾的前綴
+            folder_prefixes = set()
+            for img_data in folder_features:
+                image_file = img_data["image_file"]
+                special_angles = img_data["special_angles"]
+                special_category = img_data["special_category"]
+                # 獲取前綴
+                angle = None
+                category = best_category["category"]
+                if special_angles:
+                    angle = special_angles[0]
+                    category = special_category if special_category else category
+                specified_prefix = angle_to_prefix.get((angle, category))
+                if specified_prefix is None:
+                    specified_prefix = angle_to_prefix.get((angle, None))
+                prefix = specified_prefix if specified_prefix else folder
+                folder_prefixes.add(prefix)
+            # 為此資料夾的所有前綴設定 label_limit 和 starting_number
+            for prefix in folder_prefixes:
+                if prefix not in folder_label_limits:
+                    label_limit = int(category_label_limits.get(category, other_label_limit))
+                    starting_number = int(category_start_numbers.get(category, other_start_number))
+                    folder_label_limits[prefix] = label_limit
+                    folder_start_numbers[prefix] = starting_number
 
             # 遍歷每個圖像資料進行角度分配
             for img_data in folder_features:
@@ -1047,7 +1154,7 @@ with tab1:
         progress_text.empty()
 
         # 根據編號重新命名圖像
-        results = rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers, angle_to_prefix)
+        results = rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers, angle_to_prefix, category_label_limits, category_start_numbers)
 
         # 將結果轉換為 DataFrame 並顯示在頁面上
         result_df = pd.DataFrame(results)
@@ -1088,19 +1195,24 @@ with tab1:
 
         # 重新命名並壓縮資料夾和結果 Excel 檔案
         zip_data = rename_and_zip_folders(results, excel_data, skipped_images, folder_settings, angle_to_prefix)
-        uploaded_zip_name = os.path.splitext(uploaded_zip.name)[0]  
+        if uploaded_zip:
+            uploaded_zip_name = os.path.splitext(uploaded_zip.name)[0]  
+            download_file_name = f"{uploaded_zip_name}_結果.zip"
+        else:
+            download_file_name = "結果.zip"
         
         # 刪除上傳的圖像資料夾和臨時壓縮檔
         shutil.rmtree("uploaded_images")
-        os.remove("temp.zip") 
+        if uploaded_zip:
+            os.remove("temp.zip") 
         
         # 提供下載按鈕，下載處理後的壓縮檔
         if st.download_button(
             label="下載編圖結果",
             data=zip_data,
-            file_name=f"{uploaded_zip_name}_結果.zip",
+            file_name=download_file_name,
             mime="application/zip",
-            on_click=reset_file_uploader
+            on_click=reset_key_tab1
         ):
             st.rerun()  
 
@@ -1139,12 +1251,13 @@ def reset_tab2():
     st.session_state['duplicate_filenames'] = []
     st.session_state['modified_folders'] = set()
 
-def reset_file_uploader():
+def reset_key_tab2():
     """
-    重置文件上傳器的狀態。
+    重置文件上傳器的狀態，並刪除上傳的圖像和臨時壓縮檔。
     """
     st.session_state['file_uploader_key2'] += 1
-
+    st.session_state['filename_changes'].clear()
+    
 def get_outer_folder_images(folder_path):
     """
     獲取指定資料夾中所有圖片檔案，並按名稱排序。
@@ -1210,7 +1323,7 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
     modified_outer_count = 0  # 記錄修改的 outer images 數量
     removed_image_count = 0  # 記錄 images_to_display 被移除的數量
 
-    # 獲取前綴（僅針對 `1-Main/All`）
+    # 獲取前綴（僅針對 1-Main/All）
     if not use_full_filename:
         prefix = get_prefix(images_to_display)
         if prefix == "":
@@ -1218,7 +1331,7 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
     else:
         prefix = ""
 
-    # 處理 images_to_display 的圖片（僅限 `1-Main/All`）
+    # 處理 images_to_display 的圖片（僅限 1-Main/All）
     for image_file in images_to_display:
         text_input_key = f"{selected_folder}_{image_file}"
         new_text = st.session_state.get(text_input_key, "")
@@ -1296,7 +1409,7 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
         st.session_state['has_duplicates'] = False
         st.session_state['confirmed_changes'][selected_folder] = True
 
-        # 僅對 `1-Main/All` 的圖片進行重新命名
+        # 僅對 1-Main/All 的圖片進行重新命名
         if not use_full_filename:
             sorted_files = sorted(temp_filename_changes.items(), key=lambda x: x[1]['new_filename'])
             rename_counter = 1
@@ -1393,7 +1506,7 @@ def add_png_label(image):
         font = ImageFont.truetype("NotoSansCJK-Regular.ttc", 100)
 
     text = "PNG"
-    # 使用 `textbbox` 取得文字邊界大小
+    # 使用 textbbox 取得文字邊界大小
     text_bbox = draw.textbbox((0, 0), text, font=font)
     text_width = text_bbox[2] - text_bbox[0]
 
@@ -1410,7 +1523,7 @@ with tab2:
     initialize_tab2()
     st.write("\n")
     uploaded_file = st.file_uploader(
-        "上傳編圖結果 Zip 檔",
+        "上傳編圖結果 ZIP 檔",
         type=["zip"],
         key='file_uploader_' + str(st.session_state['file_uploader_key2']),
         on_change=reset_tab2
@@ -1529,14 +1642,14 @@ with tab2:
                     on_change=reset_duplicates_flag
                 )
 
-                # 當 `selected_folder` 變成 `None` 時，保存目前的 text_input 值
+                # 當 selected_folder 變成 None 時，保存目前的 text_input 值
                 if selected_folder is None and previous_folder is not None:
                     st.session_state['last_text_inputs'][previous_folder] = {
                         key: st.session_state[key]
                         for key in st.session_state if key.startswith(f"{previous_folder}_")
                     }
 
-                # 從 `None` 切回之前的資料夾時，恢復 text_input 值
+                # 從 None 切回之前的資料夾時，恢復 text_input 值
                 if selected_folder is not None and previous_folder is None:
                     if selected_folder in st.session_state['last_text_inputs']:
                         for key, value in st.session_state['last_text_inputs'][selected_folder].items():
@@ -1740,18 +1853,21 @@ with tab2:
                                 if detail_images_key not in st.session_state:
                                     st.session_state[detail_images_key] = detail_images_default
                             
-                                num_images_options = [str(i) for i in range(1, 11)]
-                                ad_images_options = [str(i) for i in range(1, 11)]
+                                # 計算上限
+                                upper_limit = max(10, int(num_images_default), int(ad_images_default))
+                            
+                                num_images_options = [str(i) for i in range(1, upper_limit + 1)]
+                                ad_images_options = [str(i) for i in range(1, upper_limit + 1)]
                                 type_images_options = [str(i) for i in range(0, 11)]
                             
-                                colA.selectbox('張數', num_images_options, index=num_images_options.index(str(st.session_state[num_images_key])), key=num_images_key)
-                                colB.selectbox('廣告圖', ad_images_options, index=ad_images_options.index(str(st.session_state[ad_images_key])), key=ad_images_key)
+                                colA.selectbox('張數', num_images_options, key=num_images_key)
+                                colB.selectbox('廣告圖', ad_images_options, key=ad_images_key)
                             
-                                # 僅在 `2-IMG` 資料夾存在時顯示
+                                # 僅在 2-IMG 資料夾存在時顯示
                                 if use_full_filename:
-                                    colC.selectbox('模特', type_images_options, index=type_images_options.index(str(st.session_state[model_images_key])), key=model_images_key)
-                                    colD.selectbox('平拍', type_images_options, index=type_images_options.index(str(st.session_state[flat_images_key])), key=flat_images_key)
-                                    colE.selectbox('細節', type_images_options, index=type_images_options.index(str(st.session_state[detail_images_key])), key=detail_images_key)
+                                    colC.selectbox('模特', type_images_options, key=model_images_key)
+                                    colD.selectbox('平拍', type_images_options, key=flat_images_key)
+                                    colE.selectbox('細節', type_images_options, key=detail_images_key)
                             else:
                                 num_images_key = None
                                 ad_images_key = None
@@ -1935,7 +2051,7 @@ with tab2:
                                         data=zip_buffer,
                                         file_name=uploaded_file.name,
                                         mime='application/zip',
-                                        on_click=reset_file_uploader
+                                        on_click=reset_key_tab2
                                     )
 
                     else:
@@ -1944,3 +2060,114 @@ with tab2:
                     st.error("不存在 '2-IMG' 或 '1-Main/All' 資料夾。")
             else:
                 st.error("未找到任何資料夾。")
+
+#%% 刪外層圖
+with tab3:
+    # 支援的圖片檔格式
+    IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff"]
+    EXCLUDED_EXTENSIONS = [".xlsx"]  # 不需要複製的檔案類型
+    if 'file_uploader_key3' not in st.session_state:
+        st.session_state['file_uploader_key3'] = 8
+    if 'text_area_key3' not in st.session_state:
+        st.session_state['text_area_key3'] = 8
+
+    def reset_key_tab3():
+        st.session_state['file_uploader_key3'] += 1
+        st.session_state['text_area_key3'] += 1
+
+    # 刪除與 "1-Main" 同層的圖片檔案
+    def clean_same_level_as_1_Main(root_path):
+        for root, dirs, files in os.walk(root_path):
+            # 如果資料夾中有 "1-Main"，刪除與其同層的圖片
+            if "1-Main" in dirs:
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    if os.path.splitext(file)[1].lower() in IMAGE_EXTENSIONS:
+                        os.remove(file_path)  # 刪除圖片檔案
+
+    # 將處理過的資料夾重新打包為 ZIP 檔案
+    def create_zip_from_directory(dir_path):
+        zip_buffer = BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for root, dirs, files in os.walk(dir_path):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    relative_path = os.path.relpath(file_path, dir_path)
+                    zip_file.write(file_path, relative_path)
+        zip_buffer.seek(0)  # 將指標移到開頭，準備下載
+        return zip_buffer
+
+    # 刪除本地目錄內所有檔案
+    def clean_local_directory(directory):
+        if os.path.exists(directory):
+            for root, dirs, files in os.walk(directory, topdown=False):
+                for file in files:
+                    os.remove(os.path.join(root, file))
+                for dir in dirs:
+                    os.rmdir(os.path.join(root, dir))
+
+    # 解壓縮 ZIP 檔案並處理
+    def process_zip_and_return(zip_file, local_path=None):
+        # 創建唯一的臨時資料夾來解壓縮 ZIP 檔案
+        temp_dir = "/tmp/extracted_" + str(st.session_state['file_uploader_key3'])
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)  # 確保臨時資料夾不存在
+        os.makedirs(temp_dir, exist_ok=True)
+
+        with zipfile.ZipFile(zip_file, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+
+        # 如果提供本地路徑，先清空路徑內檔案並複製 ZIP 檔案內容（未處理）到該路徑
+        if local_path:
+            clean_local_directory(local_path)
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if os.path.splitext(file)[1].lower() in EXCLUDED_EXTENSIONS:
+                        continue  # 跳過指定類型的檔案
+                    src = os.path.join(root, file)
+                    dst = os.path.join(local_path, os.path.relpath(src, temp_dir))
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    shutil.copy2(src, dst)
+
+        # 在臨時目錄中刪除與 "1-Main" 同層的圖片檔案
+        clean_same_level_as_1_Main(temp_dir)
+
+        # 將處理過的資料夾重新打包成 ZIP
+        zip_buffer = create_zip_from_directory(temp_dir)
+
+        # 清理臨時資料夾
+        shutil.rmtree(temp_dir)
+        return zip_buffer
+
+    # 使用者介面
+    st.write("\n")
+    col1, col2 = st.columns([1.6, 1])
+    uploaded_file = col1.file_uploader("上傳 ZIP 檔案", type=["zip"], key='file_uploader_' + str(st.session_state['file_uploader_key3']))
+    local_directory = col2.text_area(
+        "舊檔案路徑（選填）",
+        key='text_area_' + str(st.session_state['text_area_key3']),
+        height=78,
+        placeholder="會用 ZIP 裡的檔案覆蓋掉所輸入的路徑裡的檔案",
+        value=st.session_state.get("input_path_from_tab1", "")  # 使用 Tab1 儲存的路徑作為預設值
+    )
+
+    if uploaded_file is not None:
+        button_placeholder = st.empty()
+        with button_placeholder:
+            button_clicked = st.button("開始執行")
+
+        if button_clicked:
+            button_placeholder.empty()
+            with st.spinner("執行中，請稍候..."):
+                # 處理 ZIP 檔案
+                processed_zip = process_zip_and_return(BytesIO(uploaded_file.read()), local_path=local_directory.strip() or None)
+
+            # 提供下載選項
+            st.write("\n")
+            st.download_button(
+                label="下載已刪除外層圖片的檔案",
+                data=processed_zip,
+                file_name=uploaded_file.name.split('.')[0] + "_已刪圖." + uploaded_file.name.split('.')[-1],  # 修改檔案名稱
+                mime="application/zip",
+                on_click=reset_key_tab3
+            )
