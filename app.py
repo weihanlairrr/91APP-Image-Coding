@@ -2142,7 +2142,7 @@ with tab3:
     # 使用者介面
     st.write("\n")
     col1, col2 = st.columns([1.6, 1])
-    uploaded_file = col1.file_uploader("上傳 ZIP 檔案", type=["zip"], key='file_uploader_' + str(st.session_state['file_uploader_key3']))
+    uploaded_file = col1.file_uploader("上傳複檢完成的 ZIP 檔案", type=["zip"], key='file_uploader_' + str(st.session_state['file_uploader_key3']))
     local_directory = col2.text_area(
         "舊檔案路徑（選填）",
         key='text_area_' + str(st.session_state['text_area_key3']),
@@ -2164,6 +2164,7 @@ with tab3:
 
             # 提供下載選項
             st.write("\n")
+            st.success("已使用您上傳的檔案覆蓋舊檔案")
             st.download_button(
                 label="下載已刪除外層圖片的檔案",
                 data=processed_zip,
