@@ -362,18 +362,19 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
         old_image_path = os.path.join(folder_path, image_file)
         file_extension = os.path.splitext(image_file)[1]  # 取得原始檔案的副檔名
 
-        # 如果是 2-IMG 資料夾且 "超過上限" 或符合跳過的檔名條件，保留原樣
         if (
             use_two_img_folder
             and (new_number == "超過上限" or any(keyword in image_file for keyword in keywords_to_skip))
         ):
-            # 不進行移動或修改
             new_image_path = old_image_path
         elif new_number == "超過上限" or pd.isna(new_number):
-            # 一般情況下，將圖片保留在最外層資料夾
             new_image_path = os.path.join(folder_path, os.path.basename(image_file))
         else:
-            new_image_name = f"{prefix}_{new_number}{file_extension}"  # 使用指定前綴或資料夾名稱
+            if use_two_img_folder:
+                new_image_name = f"{prefix}{new_number}{file_extension}"  # 2-IMG 圖片移除底線
+            else:
+                new_image_name = f"{prefix}_{new_number}{file_extension}"  # 其他情況保留底線
+
             new_image_path = os.path.join(main_folder_path, new_image_name)
 
         os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
@@ -455,19 +456,17 @@ def generate_image_type_statistics(results):
         統計結果的 DataFrame
     """
     statistics = []
-    for folder, folder_results in results.groupby("資料夾"):
+    # ---- 修改開始：僅計算實際有更改檔名的圖片 ----
+    filtered_results = results[(results["編號"] != "超過上限") & (~results["編號"].isna())]
+    # ---- 修改結束 ----
+    for folder, folder_results in filtered_results.groupby("資料夾"):
         # 統計含有"模特"的角度數量
         model_count = folder_results["角度"].str.contains("模特").sum()
-        
-        # 統計符合"細節"的角度
-        detail_count = folder_results["角度"].apply(
-            lambda x: any(key in x for key in ["細節", "D1", "D2", "D3", "D4", "D5", "H1", "H2", "H3", "H4", "H5"])
-        ).sum()
         
         # 統計符合"平拍"的角度，排除 HM1-HM10
         excluded_angles = {"HM1", "HM2", "HM3", "HM4", "HM5", "HM6", "HM7", "HM8", "HM9", "HM10"}
         flat_lay_count = folder_results["角度"].apply(
-            lambda x: x not in excluded_angles and "模特" not in x and not any(key in x for key in ["細節", "D1", "D2", "D3", "D4", "D5", "H1", "H2", "H3", "H4", "H5"])
+            lambda x: x not in excluded_angles and "模特" not in x 
         ).sum()
         
         # 儲存資料夾的統計結果
@@ -475,7 +474,6 @@ def generate_image_type_statistics(results):
             "資料夾": folder,
             "模特": model_count,
             "平拍": flat_lay_count,
-            "細節": detail_count
         })
     
     return pd.DataFrame(statistics)
@@ -907,7 +905,6 @@ with tab1:
                             
                             # 根據相似度選擇最佳角度
                             for angle in valid_special_angles:
-                                # 修改開始：使用預先構建的索引
                                 index = features_by_category[selected_brand][best_category["category"]]["index"]
                                 num_samples = len(features_by_category[selected_brand][best_category["category"]]["labeled_features"])
                                 nlist = index.nlist
@@ -921,18 +918,15 @@ with tab1:
                                     continue
                                 angle_features = np.array(angle_features, dtype=np.float32)
                                 angle_features = l2_normalize(angle_features)
-                                # 創建臨時索引
                                 temp_index = faiss.IndexFlatIP(angle_features.shape[1])
                                 temp_index.add(angle_features)
                                 img_query = l2_normalize(img_features.astype(np.float32).reshape(1, -1))
                                 similarities, _ = temp_index.search(img_query, k=1)
                                 similarity_percentage = similarities[0][0] * 100
-                                # 修改結束
                                 valid_angles_by_similarity.append(
                                     (angle, similarity_percentage)
                                 )
                             
-                            # 根據相似度排序
                             valid_angles_by_similarity.sort(
                                 key=lambda x: x[1], reverse=True
                             )
@@ -954,10 +948,8 @@ with tab1:
                                     "角度": best_angle,
                                     "編號": angle_to_number[best_angle],
                                     "最大相似度": f"{best_similarity:.2f}%"
-                                    # 不新增 "前綴" 欄位
                                 }
                                 final_results[image_file] = label_info
-                                # 更新規則標誌
                                 for idx, rule in enumerate(angle_banning_rules):
                                     if best_angle in rule["if_appears_in_angle"]:
                                         rule_flags[idx] = True
@@ -966,6 +958,12 @@ with tab1:
                                     f"圖片 '{image_file}' 沒有可用的角度可以分配"
                                 )
                                 final_results[image_file] = None
+                                
+                                old_image_path = os.path.join(folder_path, image_file)
+                                new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
+                                if os.path.exists(old_image_path):
+                                    os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+                                    os.rename(old_image_path, new_image_path)
                         else:
                             # 只有一個有效的特殊角度
                             special_angle = valid_special_angles[0]
@@ -974,6 +972,12 @@ with tab1:
                                     f"角度 '{special_angle}' 已被使用，圖片 '{image_file}' 無法分配"
                                 )
                                 final_results[image_file] = None
+                                
+                                old_image_path = os.path.join(folder_path, image_file)
+                                new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
+                                if os.path.exists(old_image_path):
+                                    os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+                                    os.rename(old_image_path, new_image_path)
                             else:
                                 used_angles.add(special_angle)  # 標記角度為已使用
                                 label_info = {
@@ -983,45 +987,50 @@ with tab1:
                                     "角度": special_angle,
                                     "編號": angle_to_number[special_angle],
                                     "最大相似度": "100.00%"
-                                    # 不新增 "前綴" 欄位
                                 }
                                 final_results[image_file] = label_info
-                                # 更新規則標誌
                                 for idx, rule in enumerate(angle_banning_rules):
                                     if special_angle in rule["if_appears_in_angle"]:
                                         rule_flags[idx] = True
                     else:
-                        st.warning(
-                            f"商品分類 '{best_category['category']}' 中沒有角度 '{', '.join(special_angles)}'，圖片 '{image_file}' 無法分配"
-                        )
-                        final_results[image_file] = None
-                else:
-                    final_results[image_file] = None  # 非特殊圖像暫時不分配
+                        if best_category['category'] == "帽子" and "白背上腳照" in special_angles:
+                            old_image_path = os.path.join(folder_path, image_file)
+                            new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
+                            if os.path.exists(old_image_path):
+                                os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+                                os.rename(old_image_path, new_image_path)
+                        else:
+                            st.warning(
+                                f"商品分類 '{best_category['category']}' 中沒有角度 '{', '.join(special_angles)}'，圖片 '{image_file}' 無法分配"
+                            )
+                            final_results[image_file] = None
+                        
+                            old_image_path = os.path.join(folder_path, image_file)
+                            new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
+                            if os.path.exists(old_image_path):
+                                os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+                                os.rename(old_image_path, new_image_path)
 
-            # 獲取所有非特殊的圖像
             non_special_images = [
                 img_data for img_data in folder_features 
                 if not img_data["special_angles"]
             ]
 
             if not special_mappings:
-                non_special_images = folder_features  # 如果沒有特殊映射，所有圖像都是非特殊的
+                non_special_images = folder_features
 
             image_similarity_store = {}
 
-            # 準備特徵數據
             labeled_features = filtered_by_category
             features = np.array([item["features"] for item in labeled_features], dtype=np.float32)
             features = l2_normalize(features)
             labels = [item["labels"] for item in labeled_features]
-            # 使用預先構建的索引
             index = features_by_category[selected_brand][best_category["category"]]["index"]
             num_samples = len(features_by_category[selected_brand][best_category["category"]]["labeled_features"])
             nlist = index.nlist
             nprobe = max(1, int(np.sqrt(nlist)))
-            index.nprobe = nprobe  # 設定搜尋的簇數量
+            index.nprobe = nprobe
 
-            # 對非特殊圖像進行相似度計算
             for img_data in non_special_images:
                 image_file = img_data["image_file"]
                 if final_results.get(image_file) is not None:
@@ -1031,7 +1040,6 @@ with tab1:
                 img_features = l2_normalize(img_features)
                 similarities, indices = index.search(img_features, k=len(labels))
                 similarities = similarities.flatten()
-                # 將相似度轉換為百分比格式（0% 到 100%）
                 similarity_percentages = (similarities * 100).clip(0, 100)
                 image_similarity_list = []
                 for idx, similarity_percentage in zip(indices[0], similarity_percentages):
@@ -1045,7 +1053,6 @@ with tab1:
                         "label": label,
                         "folder": folder
                     })
-                # 去除重複角度
                 unique_labels = []
                 seen_angles = set()
                 for candidate in image_similarity_list:
@@ -1057,9 +1064,8 @@ with tab1:
                         break
                 image_similarity_store[image_file] = unique_labels
 
-            unassigned_images = set(image_similarity_store.keys())  # 未分配的圖像集合
+            unassigned_images = set(image_similarity_store.keys())
 
-            # 進行角度分配，直到所有未分配的圖像都處理完
             while unassigned_images:
                 angle_to_images = {}
                 image_current_choices = {}
@@ -1099,7 +1105,6 @@ with tab1:
                                 "角度": angle,
                                 "編號": candidate["label"]["number"],
                                 "最大相似度": f"{candidate['similarity']:.2f}%"
-                                # 不新增 "前綴" 欄位
                             }
                             assigned_in_this_round.add(image_file)
                     elif len(images) == 1:
@@ -1112,9 +1117,8 @@ with tab1:
                             "角度": angle,
                             "編號": candidate["label"]["number"],
                             "最大相似度": f"{candidate['similarity']:.2f}%"
-                            # 不新增 "前綴" 欄位
                         }
-                        used_angles.add(angle)  # 標記角度為已使用
+                        used_angles.add(angle)
                         assigned_in_this_round.add(image_file)
                     else:
                         max_similarity = -np.inf
@@ -1132,35 +1136,29 @@ with tab1:
                             "角度": angle,
                             "編號": candidate["label"]["number"],
                             "最大相似度": f"{candidate['similarity']:.2f}%"
-                            # 不新增 "前綴" 欄位
                         }
-                        used_angles.add(angle)  # 標記角度為已使用
+                        used_angles.add(angle)
                         assigned_in_this_round.add(best_image)
 
-                unassigned_images -= assigned_in_this_round  # 更新未分配的圖像
+                unassigned_images -= assigned_in_this_round
                 if not assigned_in_this_round:
-                    break  # 如果沒有圖像在本輪被分配，則退出循環
+                    break
 
-            # 將最終分配結果添加到結果列表
             for image_file, assignment in final_results.items():
                 if assignment is not None:
                     results.append(assignment)
 
             processed_folders += 1
-            progress_bar.progress(processed_folders / total_folders)  # 更新進度條
+            progress_bar.progress(processed_folders / total_folders)
 
-        # 清空進度條和進度文字
         progress_bar.empty()
         progress_text.empty()
 
-        # 根據編號重新命名圖像
         results = rename_numbers_in_folder(results, folder_label_limits, folder_start_numbers, angle_to_prefix, category_label_limits, category_start_numbers)
 
-        # 將結果轉換為 DataFrame 並顯示在頁面上
         result_df = pd.DataFrame(results)
         st.dataframe(result_df, hide_index=True, use_container_width=True)
         
-        # 創建 '編圖張數與廣告圖' 的資料
         folder_data = []
         for folder in image_folders:
             folder_results = result_df[result_df['資料夾'] == folder]
@@ -1168,16 +1166,14 @@ with tab1:
                 (folder_results['編號'] != '超過上限') & (~folder_results['編號'].isna())
             ]
             num_images = len(valid_images)
-            # ADS廣告圖
             if selected_brand == "ADS":
                 ad_images = valid_images[valid_images['角度'].str.contains('情境|HM')]
                 num_ad_images = len(ad_images)
                 if num_ad_images > 0:
-                    ad_image_value = f"{num_ad_images + 1:02}"  # 格式化為兩位數字
+                    ad_image_value = f"{num_ad_images + 1:02}"
                 else:
-                    ad_image_value = "01"  # 格式化為兩位數字
+                    ad_image_value = "01"
             else:
-                # 其他品牌廣告圖欄位
                 ad_image_value = ""
         
             folder_data.append({'資料夾': folder, '張數': num_images, '廣告圖': ad_image_value})
@@ -1185,7 +1181,6 @@ with tab1:
         folder_df = pd.DataFrame(folder_data)
         image_type_statistics_df = generate_image_type_statistics(result_df)
         
-        # 將結果 DataFrame 和 '編圖張數與廣告圖' 寫入 Excel 檔案
         excel_buffer = BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
             result_df.to_excel(writer, sheet_name='編圖結果', index=False)
@@ -1193,7 +1188,6 @@ with tab1:
             image_type_statistics_df.to_excel(writer, sheet_name='圖片類型統計', index=False)
         excel_data = excel_buffer.getvalue()
 
-        # 重新命名並壓縮資料夾和結果 Excel 檔案
         zip_data = rename_and_zip_folders(results, excel_data, skipped_images, folder_settings, angle_to_prefix)
         if uploaded_zip:
             uploaded_zip_name = os.path.splitext(uploaded_zip.name)[0]  
@@ -1201,12 +1195,10 @@ with tab1:
         else:
             download_file_name = "結果.zip"
         
-        # 刪除上傳的圖像資料夾和臨時壓縮檔
         shutil.rmtree("uploaded_images")
         if uploaded_zip:
             os.remove("temp.zip") 
         
-        # 提供下載按鈕，下載處理後的壓縮檔
         if st.download_button(
             label="下載編圖結果",
             data=zip_data,
@@ -1214,7 +1206,8 @@ with tab1:
             mime="application/zip",
             on_click=reset_key_tab1
         ):
-            st.rerun()  
+            st.rerun()
+
 
 #%% 編圖複檢
 def initialize_tab2():
@@ -1449,17 +1442,14 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
     # 新增處理模特、平拍、細節的值
     model_images_key = f"{selected_folder}_model_images"
     flat_images_key = f"{selected_folder}_flat_images"
-    detail_images_key = f"{selected_folder}_detail_images"
     model_images_value = st.session_state.get(model_images_key)
     flat_images_value = st.session_state.get(flat_images_key)
-    detail_images_value = st.session_state.get(detail_images_key)
 
     st.session_state['folder_values'][data_folder_name] = {
         '張數': st.session_state[num_images_key],
         '廣告圖': ad_images_value,
         '模特': model_images_value,
         '平拍': flat_images_value,
-        '細節': detail_images_value
     }
 
     # 記錄修改過的資料夾
@@ -1556,13 +1546,13 @@ with tab2:
                         folder_name = str(row['資料夾'])
                         type_folder_to_row_idx[folder_name] = idx
                 else:
-                    type_sheet_df = pd.DataFrame(columns=['資料夾', '模特', '平拍', '細節'])
+                    type_sheet_df = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
                     type_folder_to_row_idx = {}
             else:
                 excel_sheets = {}
                 sheet_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
                 folder_to_row_idx = {}
-                type_sheet_df = pd.DataFrame(columns=['資料夾', '模特', '平拍', '細節'])
+                type_sheet_df = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
                 type_folder_to_row_idx = {}
 
             # 建立資料夾名稱與 '資料夾' 值的對應關係
@@ -1588,7 +1578,6 @@ with tab2:
                                 '廣告圖': str(row['廣告圖']),
                                 '模特': str(type_row['模特']),
                                 '平拍': str(type_row['平拍']),
-                                '細節': str(type_row['細節'])
                             }
                         else:
                             folder_to_data[folder_name] = {
@@ -1597,7 +1586,6 @@ with tab2:
                                 '廣告圖': str(row['廣告圖']),
                                 '模特': '0',
                                 '平拍': '0',
-                                '細節': '0'
                             }
                         matched = True
                         break
@@ -1608,7 +1596,6 @@ with tab2:
                         '廣告圖': '1',
                         '模特': '0',
                         '平拍': '0',
-                        '細節': '0'
                     }
 
             # 初始化 folder_values，確保所有資料夾都有初始值
@@ -1620,7 +1607,6 @@ with tab2:
                         '廣告圖': data.get('廣告圖', '1'),
                         '模特': data.get('模特', '0'),
                         '平拍': data.get('平拍', '0'),
-                        '細節': data.get('細節', '0')
                     }
 
             if 'previous_selected_folder' not in st.session_state and top_level_folders:
@@ -1824,19 +1810,16 @@ with tab2:
                                     ad_images_default = st.session_state['folder_values'][data_folder_name]['廣告圖']
                                     model_images_default = st.session_state['folder_values'][data_folder_name]['模特']
                                     flat_images_default = st.session_state['folder_values'][data_folder_name]['平拍']
-                                    detail_images_default = st.session_state['folder_values'][data_folder_name]['細節']
                                 else:
                                     num_images_default = data.get('張數', '1')
                                     ad_images_default = data.get('廣告圖', '1')
                                     model_images_default = data.get('模特', '0')
                                     flat_images_default = data.get('平拍', '0')
-                                    detail_images_default = data.get('細節', '0')
                             
                                 num_images_key = f"{selected_folder}_num_images"
                                 ad_images_key = f"{selected_folder}_ad_images"
                                 model_images_key = f"{selected_folder}_model_images"
                                 flat_images_key = f"{selected_folder}_flat_images"
-                                detail_images_key = f"{selected_folder}_detail_images"
                             
                                 if num_images_key not in st.session_state:
                                     st.session_state[num_images_key] = num_images_default
@@ -1849,9 +1832,6 @@ with tab2:
                             
                                 if flat_images_key not in st.session_state:
                                     st.session_state[flat_images_key] = flat_images_default
-                            
-                                if detail_images_key not in st.session_state:
-                                    st.session_state[detail_images_key] = detail_images_default
                             
                                 # 計算上限
                                 upper_limit = max(10, int(num_images_default), int(ad_images_default))
@@ -1867,7 +1847,6 @@ with tab2:
                                 if use_full_filename:
                                     colC.selectbox('模特', type_images_options, key=model_images_key)
                                     colD.selectbox('平拍', type_images_options, key=flat_images_key)
-                                    colE.selectbox('細節', type_images_options, key=detail_images_key)
                             else:
                                 num_images_key = None
                                 ad_images_key = None
@@ -1975,7 +1954,7 @@ with tab2:
                                             excel_sheets['編圖張數與廣告圖'] = result_df
 
                                             # 處理 '圖片類型統計' 工作表
-                                            type_result_df = excel_sheets.get('圖片類型統計', pd.DataFrame(columns=['資料夾', '模特', '平拍', '細節']))
+                                            type_result_df = excel_sheets.get('圖片類型統計', pd.DataFrame(columns=['資料夾', '模特', '平拍']))
 
                                             # 更新所有資料夾的 '模特'、'平拍'、'細節' 值
                                             for idx, row in type_result_df.iterrows():
@@ -1983,11 +1962,9 @@ with tab2:
                                                 if data_folder_name in st.session_state['folder_values']:
                                                     model_images = st.session_state['folder_values'][data_folder_name]['模特']
                                                     flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
-                                                    detail_images = st.session_state['folder_values'][data_folder_name]['細節']
 
                                                     type_result_df.at[idx, '模特'] = model_images
                                                     type_result_df.at[idx, '平拍'] = flat_images
-                                                    type_result_df.at[idx, '細節'] = detail_images
 
                                             # 如果有新的資料夾沒有在原始 Excel 中，添加它們
                                             existing_type_folders = set(type_result_df['資料夾'])
@@ -1995,13 +1972,11 @@ with tab2:
                                                 if data_folder_name not in existing_type_folders:
                                                     model_images = st.session_state['folder_values'][data_folder_name]['模特']
                                                     flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
-                                                    detail_images = st.session_state['folder_values'][data_folder_name]['細節']
 
                                                     new_row = pd.DataFrame([{
                                                         '資料夾': data_folder_name,
                                                         '模特': model_images,
                                                         '平拍': flat_images,
-                                                        '細節': detail_images
                                                     }])
                                                     type_result_df = pd.concat([type_result_df, new_row], ignore_index=True)
 
@@ -2015,7 +1990,7 @@ with tab2:
                                         else:
                                             # 如果上傳的檔案中沒有 '編圖結果.xlsx'
                                             result_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
-                                            type_result_df = pd.DataFrame(columns=['資料夾', '模特', '平拍', '細節'])
+                                            type_result_df = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
                                             for data_folder_name in st.session_state['folder_values']:
                                                 num_images = st.session_state['folder_values'][data_folder_name]['張數']
                                                 ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
@@ -2029,12 +2004,10 @@ with tab2:
 
                                                 model_images = st.session_state['folder_values'][data_folder_name]['模特']
                                                 flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
-                                                detail_images = st.session_state['folder_values'][data_folder_name]['細節']
                                                 new_type_row = pd.DataFrame([{
                                                     '資料夾': data_folder_name,
                                                     '模特': model_images,
                                                     '平拍': flat_images,
-                                                    '細節': detail_images
                                                 }])
                                                 type_result_df = pd.concat([type_result_df, new_type_row], ignore_index=True)
                                             with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
@@ -2065,7 +2038,8 @@ with tab2:
 with tab3:
     # 支援的圖片檔格式
     IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff"]
-    EXCLUDED_EXTENSIONS = [".xlsx"]  # 不需要複製的檔案類型
+    EXCLUDED_EXTENSIONS = [".xlsx", ".gsheet"]  # 不需要刪除或複製的檔案類型
+
     if 'file_uploader_key3' not in st.session_state:
         st.session_state['file_uploader_key3'] = 8
     if 'text_area_key3' not in st.session_state:
@@ -2075,7 +2049,7 @@ with tab3:
         st.session_state['file_uploader_key3'] += 1
         st.session_state['text_area_key3'] += 1
 
-    # 刪除與 "1-Main" 同層的圖片檔案
+    # 刪除與 "1-Main" 同層的圖片檔案，但保留指定的檔案類型
     def clean_same_level_as_1_Main(root_path):
         for root, dirs, files in os.walk(root_path):
             # 如果資料夾中有 "1-Main"，刪除與其同層的圖片
@@ -2097,11 +2071,13 @@ with tab3:
         zip_buffer.seek(0)  # 將指標移到開頭，準備下載
         return zip_buffer
 
-    # 刪除本地目錄內所有檔案
+    # 刪除本地目錄內所有檔案，但保留指定的檔案類型
     def clean_local_directory(directory):
         if os.path.exists(directory):
             for root, dirs, files in os.walk(directory, topdown=False):
                 for file in files:
+                    if os.path.splitext(file)[1].lower() in EXCLUDED_EXTENSIONS:
+                        continue  # 跳過指定類型的檔案
                     os.remove(os.path.join(root, file))
                 for dir in dirs:
                     os.rmdir(os.path.join(root, dir))
@@ -2164,7 +2140,8 @@ with tab3:
 
             # 提供下載選項
             st.write("\n")
-            st.success("已使用您上傳的檔案覆蓋舊檔案")
+            if local_directory:
+                st.success("已使用您上傳的檔案覆蓋舊檔案")
             st.download_button(
                 label="下載已刪除外層圖片的檔案",
                 data=processed_zip,
