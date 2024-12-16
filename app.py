@@ -189,7 +189,21 @@ def handle_text_area_change():
     """當 text area 狀態變化時更新 file uploader disabled 屬性"""
     text_key = 'text_area_' + str(st.session_state.get('text_area_key1', 0))
     text_content = st.session_state.get(text_key, "")
-    st.session_state.file_uploader_disabled = bool(text_content)
+    
+    # 如果輸入的內容是 search-ms 開頭的 URI，進行路徑轉換
+    if text_content.startswith("search-ms:"):
+        # 解析路徑中的 location 欄位
+        match = re.search(r'location:([^&]+)', text_content)
+        if match:
+            # 解碼 URL 並轉換為實際路徑
+            decoded_path = re.sub(r'%3A', ':', match.group(1))  # 解碼冒號
+            decoded_path = re.sub(r'%5C', '\\\\', decoded_path)  # 解碼反斜線
+            st.session_state[text_key] = decoded_path
+        else:
+            st.warning("無法解析 search-ms 路徑，請確認輸入格式。")
+    
+    # 更新 file uploader 的狀態
+    st.session_state.file_uploader_disabled = bool(st.session_state[text_key])
             
 def reset_key_tab1():
     """
@@ -2083,15 +2097,26 @@ with tab3:
 
     # 解壓縮 ZIP 檔案並處理
     def process_zip_and_return(zip_file, local_path=None):
+        # 如果 local_path 是 search-ms 格式，嘗試解析並轉換為正確路徑
+        if local_path and local_path.startswith("search-ms:"):
+            match = re.search(r'location:([^&]+)', local_path)
+            if match:
+                decoded_path = re.sub(r'%3A', ':', match.group(1))  # 解碼冒號
+                decoded_path = re.sub(r'%5C', '\\\\', decoded_path)  # 解碼反斜線
+                local_path = decoded_path
+            else:
+                st.warning("無法解析 search-ms 路徑，將忽略指定的本地路徑")
+                local_path = None  # 無法解析時，設定為 None
+    
         # 創建唯一的臨時資料夾來解壓縮 ZIP 檔案
         temp_dir = "/tmp/extracted_" + str(st.session_state['file_uploader_key3'])
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)  # 確保臨時資料夾不存在
         os.makedirs(temp_dir, exist_ok=True)
-
+    
         with zipfile.ZipFile(zip_file, 'r') as zip_ref:
             zip_ref.extractall(temp_dir)
-
+    
         # 如果提供本地路徑，先清空路徑內檔案並複製 ZIP 檔案內容（未處理）到該路徑
         if local_path:
             clean_local_directory(local_path)
@@ -2103,16 +2128,17 @@ with tab3:
                     dst = os.path.join(local_path, os.path.relpath(src, temp_dir))
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
                     shutil.copy2(src, dst)
-
+    
         # 在臨時目錄中刪除與 "1-Main" 同層的圖片檔案
         clean_same_level_as_1_Main(temp_dir)
-
+    
         # 將處理過的資料夾重新打包成 ZIP
         zip_buffer = create_zip_from_directory(temp_dir)
-
+    
         # 清理臨時資料夾
         shutil.rmtree(temp_dir)
         return zip_buffer
+
 
     # 使用者介面
     st.write("\n")
