@@ -98,12 +98,8 @@ for excel_file in excel_files:
         
         if category not in features_by_category[brand]:
             features_by_category[brand][category] = {
-                "all_features": [],
                 "labeled_features": []
             }
-
-        # 儲存同品牌、同商品分類下的每張圖片特徵
-        features_by_category[brand][category]["all_features"].append(image_features)
 
         # 儲存同品牌、同商品分類、同角度、同編號的特徵
         features_by_category[brand][category]["labeled_features"].append({
