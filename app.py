@@ -2023,7 +2023,7 @@ with tab2:
                             download_file_name = uploaded_file_2.name if uploaded_file_2 else "結果.zip"
                             
                             # 提供下載按鈕
-                            col1, col2 = st.columns([2.7, 1])
+                            col1, col2 = st.columns([3.4, 1])
                             if st.session_state["input_path_from_tab1"]:
                                 cover_text_default = st.session_state.get("input_path_from_tab1")
                             elif not uploaded_file_2 and input_path_2:
@@ -2034,7 +2034,7 @@ with tab2:
                             cover_path_input = col1.text_input(
                                 label="同步覆蓋此路徑的檔案",
                                 value=cover_text_default,
-                                placeholder="輸入分包資料夾路徑以直接覆蓋原檔案 (選填)"
+                                placeholder="   輸入分包資料夾路徑以直接覆蓋原檔案 (選填)",
                             )
                     
                             col2.download_button(
