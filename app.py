@@ -27,8 +27,8 @@ faiss.omp_set_num_threads(1)
 custom_css = """
 <style>
 section.stMain {
-    padding-left: 13%; 
-    padding-right: 13%;
+    padding-left: 12%; 
+    padding-right: 12%;
 }
 @media (min-width: 1900px) {
     section.stMain {
