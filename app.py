@@ -1235,21 +1235,7 @@ def reset_duplicates_flag():
     重設 session state 中的重複檔名標誌。
     """
     st.session_state['has_duplicates'] = False
-
-
-def load_psd_image(psd_path):
-    """
-    加載並轉換 PSD 文件為可顯示的格式（PNG）。
-    """
-    try:
-        psd = PSDImage.open(psd_path)
-        # 將 PSD 的合成圖層轉換為 RGB
-        composite_image = psd.composite()
-        return composite_image
-    except Exception as e:
-        print(f"無法加載 PSD 文件: {e}")
-        return None
-    
+ 
 @functools.lru_cache(maxsize=128)
 def load_and_process_image(image_path, add_label=False):
     """
@@ -1259,7 +1245,7 @@ def load_and_process_image(image_path, add_label=False):
 
     # 對 PSD 圖片進行處理
     if ext == '.psd':
-        image = load_psd_image(image_path)
+        image = PSDImage.open(image_path).composite()
         if image:
             image = image.convert('RGB')  # 確保與其他格式一致
         else:
@@ -1278,7 +1264,7 @@ def load_and_process_image(image_path, add_label=False):
         image = add_image_label(image, ext)
 
     # 統一大小
-    image = ImageOps.pad(image, (500, 500), method=Image.Resampling.LANCZOS)
+    image = ImageOps.pad(image, (1000, 1000), method=Image.Resampling.LANCZOS)
     return image
 
 def handle_file_uploader_change_tab2():
