@@ -19,7 +19,7 @@ import functools
 import imagecodecs
 from psd_tools import PSDImage
 
-st.set_page_config(page_title='TP自動化編圖工具', page_icon='👕',layout="wide")
+st.set_page_config(page_title='TP自動編圖工具', page_icon='👕', layout="wide")
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 faiss.omp_set_num_threads(1)
 
@@ -77,23 +77,76 @@ div[data-testid=stToast] {
     background-color: #fff8b3;
 }
 header[data-testid="stHeader"] {
-    height: 30px; /* 設定你希望的高度 */
-    padding: 5px; /* 調整內距，確保內容不超出 */
+    height: 30px; 
+    padding: 5px; 
 }
 [data-testid="stPopover"] {
     display: flex;
-    justify-content: flex-end; /* 讓按鈕靠右 */
+    justify-content: flex-end; 
 }
 </style>
 """
-
 st.markdown(custom_css, unsafe_allow_html=True)
-#%% function
+
+#%% 自動編圖
+def find_brand_files(brand_name):
+    """
+    在指定品牌資料夾下，自動尋找包含 'image_features' 的 pkl 檔與
+    包含 '檔名角度對照表' 的 xlsx 檔 (僅會有一個)。
+    """
+    brand_path = os.path.join("dependencies", brand_name)
+    train_file = None
+    angle_filename_reference = None
+    
+    # 在該品牌資料夾尋找指定關鍵字的檔案
+    for filename in os.listdir(brand_path):
+        lower_filename = filename.lower()
+        if lower_filename.endswith(".pkl") and ("image_features" in lower_filename):
+            train_file = os.path.join(brand_path, filename)
+        if lower_filename.endswith(".xlsx") and ("檔名角度對照表" in lower_filename):
+            angle_filename_reference = os.path.join(brand_path, filename)
+    
+    return train_file, angle_filename_reference
+
+def get_dynamic_nlist(num_samples):
+    """
+    根據樣本數決定 IVF 的 nlist。
+    """
+    if num_samples >= 1000:
+        return min(200, int(np.sqrt(num_samples)))
+    elif num_samples >= 100:
+        return min(100, int(np.sqrt(num_samples)))
+    else:
+        return max(1, num_samples // 2)
+
+def l2_normalize(vectors):
+    """
+    L2 Normalization。
+    """
+    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+    return vectors / norms
+
+def build_ivf_index(features, nlist):
+    """
+    建立 IVF 索引。
+    """
+    d = features.shape[1]  
+    nlist = min(nlist, len(features))  
+    quantizer = faiss.IndexFlatIP(d)  
+    index = faiss.IndexIVFFlat(quantizer, d, nlist, faiss.METRIC_INNER_PRODUCT)
+    index.train(features)
+    index.add(features)
+    return index
+
 @st.cache_resource
 def load_resnet_model():
+    """
+    載入 ResNet 模型 (去除最後一層分類)。
+    """
     device = torch.device("cpu")
     weights_path = "dependencies/resnet50.pt"
     resnet = models.resnet50()
+    # 注意：若有 weights_only=True，可能需要依實際需要修改
     resnet.load_state_dict(torch.load(weights_path, map_location=device, weights_only=True))
     resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
     resnet.eval().to(device)
@@ -101,6 +154,9 @@ def load_resnet_model():
 
 @st.cache_resource
 def get_preprocess_transforms():
+    """
+    建立圖像前處理流程。
+    """
     return transforms.Compose([
         transforms.Resize(256),
         transforms.CenterCrop(224),
@@ -111,48 +167,77 @@ def get_preprocess_transforms():
         ),
     ])
 
-def get_dynamic_nlist(num_samples):
-    if num_samples >= 1000:
-        return min(200, int(np.sqrt(num_samples)))  
-    elif num_samples >= 100:
-        return min(100, int(np.sqrt(num_samples)))  
-    else:
-        return max(1, num_samples // 2)  
-
 @st.cache_resource
 def load_image_features_with_ivf(train_file_path):
+    """
+    從 pickle 檔載入已標注的特徵資料，並為每個子分類建立 IVF 索引。
+    """
     with open(train_file_path, 'rb') as f:
         features_by_category = pickle.load(f)
     
     for brand, categories in features_by_category.items():
         for category, data in categories.items():
             features = np.array([item["features"] for item in data["labeled_features"]], dtype=np.float32)
-            features = l2_normalize(features)  
+            features = l2_normalize(features)
             num_samples = len(features)
-            nlist = get_dynamic_nlist(num_samples)  
+            nlist = get_dynamic_nlist(num_samples)
             index = build_ivf_index(features, nlist)
             features_by_category[brand][category]["index"] = index
     return features_by_category
 
-def build_ivf_index(features, nlist):
-    d = features.shape[1]  
-    nlist = min(nlist, len(features))  
-    quantizer = faiss.IndexFlatIP(d)  
-    index = faiss.IndexIVFFlat(quantizer, d, nlist, faiss.METRIC_INNER_PRODUCT)
-    index.train(features)  
-    index.add(features)  
-    return index
-
 def get_image_features(image, model):
+    """
+    將圖片餵入 ResNet，回傳特徵向量。
+    """
     device = torch.device("cpu")
-    image = preprocess(image).unsqueeze(0).to(device)  
+    image = preprocess(image).unsqueeze(0).to(device)
     with torch.no_grad():
-        features = model(image).cpu().numpy().flatten()  
+        features = model(image).cpu().numpy().flatten()
     return features
 
-def l2_normalize(vectors):
-    norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-    return vectors / norms
+def category_match(image_files, keywords, match_all):
+    """
+    檢查資料夾是否符合某一分類規則。
+    """
+    if match_all:
+        return all(any(keyword in image_file for image_file in image_files) for keyword in keywords)
+    else:
+        return any(any(keyword in image_file for image_file in image_files) for keyword in keywords)
+
+def is_banned_angle(item_angle, rule_flags):
+    """
+    檢查角度是否屬於禁用規則。
+    """
+    for idx, rule in enumerate(angle_banning_rules):
+        if rule_flags[idx]:
+            if rule["banned_angle_logic"] == "等於":
+                if item_angle == rule["banned_angle"]:
+                    return True
+            elif rule["banned_angle_logic"] == "包含":
+                if rule["banned_angle"] in item_angle:
+                    return True
+    return False
+
+def generate_image_type_statistics(results):
+    """
+    產生圖片類型統計（如模特、平拍）。
+    """
+    filtered_results = results[
+        (results["編號"] != "超過上限") & (~results["編號"].isna())
+    ]
+    statistics = []
+    for folder, folder_results in filtered_results.groupby("資料夾"):
+        model_count = folder_results["角度"].str.contains("模特").sum()
+        excluded_angles = {"HM1", "HM2", "HM3", "HM4", "HM5", "HM6", "HM7", "HM8", "HM9", "HM10"}
+        flat_lay_count = folder_results["角度"].apply(
+            lambda x: x not in excluded_angles and "模特" not in x 
+        ).sum()
+        statistics.append({
+            "資料夾": folder,
+            "模特": model_count,
+            "平拍": flat_lay_count,
+        })
+    return pd.DataFrame(statistics)
 
 def handle_file_uploader_change():
     """
@@ -163,17 +248,13 @@ def handle_file_uploader_change():
 
     if uploaded_file_1:
         current_filename = uploaded_file_1.name
-        # 檢查是否是新的檔案
         if current_filename != st.session_state.get('previous_uploaded_file_name_tab1', None):
-            # 清空暫存資料夾
             if os.path.exists("uploaded_images"):
                 shutil.rmtree("uploaded_images")
-            # 更新暫存目錄名稱
             if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
                 shutil.rmtree(st.session_state["custom_tmpdir"], ignore_errors=True)
             st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
 
-            # 更新 session_state 的記錄
             st.session_state['previous_uploaded_file_name_tab1'] = current_filename
 
     st.session_state.text_area_disabled_1 = bool(uploaded_file_1)
@@ -185,20 +266,15 @@ def handle_text_area_change():
     text_key = 'text_area_' + str(st.session_state.get('text_area_key1', 0))
     text_content = st.session_state.get(text_key, "").strip()
 
-    # 檢查是否是新的路徑
     if text_content != st.session_state.get('previous_input_path_tab1', None):
-        # 清空暫存資料夾
         if os.path.exists("uploaded_images"):
             shutil.rmtree("uploaded_images")
-        # 更新暫存目錄名稱
         if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
             shutil.rmtree(st.session_state["custom_tmpdir"], ignore_errors=True)
         st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
 
-        # 更新 session_state 的記錄
         st.session_state['previous_input_path_tab1'] = text_content
 
-    # 若使用者輸入特殊路徑格式 "search-ms:"，進行解析處理
     if text_content.startswith("search-ms:"):
         match = re.search(r'location:([^&]+)', text_content)
         if match:
@@ -209,14 +285,20 @@ def handle_text_area_change():
             st.warning("無法解析 search-ms 路徑，請確認輸入格式。")
 
     st.session_state.file_uploader_disabled_1 = bool(text_content)
-            
+
 def reset_key_tab1():
+    """
+    重置檔案上傳器與路徑輸入的 key，並解除其 disable 狀態。
+    """
     st.session_state['file_uploader_key1'] += 1 
     st.session_state['text_area_key1'] += 1 
     st.session_state['file_uploader_disabled_1'] = False
     st.session_state['text_area_disabled_1'] = False
 
 def unzip_file(uploaded_zip):
+    """
+    解壓上傳的 zip 檔，並處理編碼問題 (__MACOSX、隱藏檔等)。
+    """
     with zipfile.ZipFile(uploaded_zip, 'r') as zip_ref:
         for member in zip_ref.infolist():
             if "__MACOSX" in member.filename or member.filename.startswith('.'):
@@ -228,8 +310,11 @@ def unzip_file(uploaded_zip):
             except (UnicodeDecodeError, LookupError, TypeError):
                 member.filename = raw_bytes.decode('utf-8', errors='ignore')
             zip_ref.extract(member, "uploaded_images")
-            
+
 def get_images_in_folder(folder_path):
+    """
+    取得資料夾內的圖片清單，並判斷是否使用 2-IMG 結構。
+    """
     image_files = []
     two_img_folder_path = os.path.join(folder_path, '2-IMG')
     ads_folder_path = os.path.join(folder_path, '1-Main/All')
@@ -257,9 +342,23 @@ def get_images_in_folder(folder_path):
                     full_image_path = os.path.join(root, file)
                     relative_image_path = os.path.relpath(full_image_path, folder_path)
                     image_files.append((relative_image_path, full_image_path))
+
     return image_files, use_two_img_folder
 
+def get_prefix(angle, best_category, folder, angle_to_prefix):
+    """
+    取得最終 prefix，若該分類設定為 single 且原本 prefix = None，則使用資料夾名稱。
+    """
+    prefix = angle_to_prefix.get((angle, best_category["category"]), angle_to_prefix.get((angle, None), None))
+    cat_setting = category_settings.get(best_category["category"], category_settings.get("其他"))
+    if cat_setting["prefix_mode"] == "single" and cat_setting["prefix"] is None:
+        prefix = folder
+    return prefix
+    
 def rename_numbers_in_folder(results, category_settings, folder_settings, angle_to_prefix):
+    """
+    依商品分類設定 (prefix_mode、上限、起始號碼) 將圖檔編號重新命名。
+    """
     df = pd.DataFrame(results)
     df["最終前綴"] = df.get("最終前綴", None)
 
@@ -285,11 +384,12 @@ def rename_numbers_in_folder(results, category_settings, folder_settings, angle_
             label_limit = cat_setting["label_limit"]
             start_num = cat_setting["start_number"]
             
-            # 如果"指定前綴"為None(空值)，則忽略angle_filename_reference的prefix，一律用資料夾名稱
+            # 如果 "指定前綴" 為 None，則一律用資料夾名稱當前綴
             if prefix is None:
                 prefix = folder
 
             if prefix is None:
+                # 仍確保執行邏輯，但其實上面已將 prefix 設為 folder
                 valid_idx = folder_df[~folder_df["numeric_編號"].isna()].index
                 for i, idx_ in enumerate(valid_idx):
                     if i < label_limit:
@@ -297,8 +397,15 @@ def rename_numbers_in_folder(results, category_settings, folder_settings, angle_
                     else:
                         folder_df.at[idx_, "編號"] = "超過上限"
             else:
-                valid_idx = folder_df[(~folder_df["numeric_編號"].isna()) & ((folder_df["最終前綴"] == prefix) | (folder_df["最終前綴"].isna()))].index
-                not_match_idx = folder_df[(~folder_df["numeric_編號"].isna()) & (folder_df["最終前綴"] != prefix) & (folder_df["最終前綴"].notna())].index
+                valid_idx = folder_df[
+                    (~folder_df["numeric_編號"].isna()) & 
+                    ((folder_df["最終前綴"] == prefix) | (folder_df["最終前綴"].isna()))
+                ].index
+                not_match_idx = folder_df[
+                    (~folder_df["numeric_編號"].isna()) & 
+                    (folder_df["最終前綴"] != prefix) & 
+                    (folder_df["最終前綴"].notna())
+                ].index
                 folder_df.loc[not_match_idx, "編號"] = np.nan
 
                 for i, idx_ in enumerate(valid_idx):
@@ -306,7 +413,6 @@ def rename_numbers_in_folder(results, category_settings, folder_settings, angle_
                         folder_df.at[idx_, "編號"] = f"{start_num + i:02d}"
                     else:
                         folder_df.at[idx_, "編號"] = "超過上限"
-
         else:
             prefix_list = cat_setting["prefixes"]
             label_limits = cat_setting["label_limits"]
@@ -318,7 +424,10 @@ def rename_numbers_in_folder(results, category_settings, folder_settings, angle_
                 pfx_limit = label_limits[p_idx]
                 pfx_start = start_numbers[p_idx]
                 
-                subset_idx = folder_df[(folder_df["最終前綴"] == pfx) & (~folder_df["numeric_編號"].isna())].index
+                subset_idx = folder_df[
+                    (folder_df["最終前綴"] == pfx) & 
+                    (~folder_df["numeric_編號"].isna())
+                ].index
                 for i, idx_ in enumerate(subset_idx):
                     if i < pfx_limit:
                         folder_df.at[idx_, "編號"] = f"{pfx_start + i:02d}"
@@ -332,6 +441,9 @@ def rename_numbers_in_folder(results, category_settings, folder_settings, angle_
     return new_df.to_dict('records')
 
 def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_settings, angle_to_prefix):
+    """
+    根據使用者最終結果 (results)，對圖片重新命名並壓縮下載。
+    """
     output_folder_path = "uploaded_images"
 
     for result in results:
@@ -356,10 +468,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
         old_image_path = os.path.join(folder_path, image_file)
         file_extension = os.path.splitext(image_file)[1]
 
-        if (
-            use_two_img_folder
-            and (new_number == "超過上限" or pd.isna(new_number))
-        ):
+        if (use_two_img_folder and (new_number == "超過上限" or pd.isna(new_number))):
             new_image_path = old_image_path
         elif new_number == "超過上限" or pd.isna(new_number):
             new_image_path = os.path.join(folder_path, os.path.basename(image_file))
@@ -379,12 +488,10 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
     for skipped in skipped_images:
         folder_name = skipped["資料夾"]
         image_file = skipped["圖片"]
-
         folder_path = os.path.join(output_folder_path, folder_name)
         old_image_path = os.path.join(folder_path, image_file)
 
         use_two_img_folder = folder_settings.get(folder_name, False)
-
         if not use_two_img_folder:
             new_image_path = os.path.join(folder_path, os.path.basename(image_file))
             if os.path.exists(old_image_path):
@@ -410,52 +517,34 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
 
     return zip_buffer.getvalue()
 
-def category_match(image_files, keywords, match_all):
-    if match_all:
-        return all(any(keyword in image_file for image_file in image_files) for keyword in keywords)
-    else:
-        return any(any(keyword in image_file for image_file in image_files) for keyword in keywords)
-
-def is_banned_angle(item_angle, rule_flags):
-    for idx, rule in enumerate(angle_banning_rules):
-        if rule_flags[idx]:
-            if rule["banned_angle_logic"] == "等於":
-                if item_angle == rule["banned_angle"]:
-                    return True
-            elif rule["banned_angle_logic"] == "包含":
-                if rule["banned_angle"] in item_angle:
-                    return True
-    return False    
-
-def generate_image_type_statistics(results):
-    filtered_results = results[(results["編號"] != "超過上限") & (~results["編號"].isna())]
-    statistics = []
-    for folder, folder_results in filtered_results.groupby("資料夾"):
-        model_count = folder_results["角度"].str.contains("模特").sum()
-        excluded_angles = {"HM1", "HM2", "HM3", "HM4", "HM5", "HM6", "HM7", "HM8", "HM9", "HM10"}
-        flat_lay_count = folder_results["角度"].apply(
-            lambda x: x not in excluded_angles and "模特" not in x 
-        ).sum()
-        statistics.append({
-            "資料夾": folder,
-            "模特": model_count,
-            "平拍": flat_lay_count,
-        })
-    return pd.DataFrame(statistics)
-
-#%% 自動編圖介面
 tab1, tab2 = st.tabs(["自動編圖", "編圖複檢"])
+
+selected_brand_file = "dependencies/selected_brand.txt"
+
+# 取得所有位於 "dependencies" 下的子資料夾，即為品牌列表
+brand_folders = [
+    f for f in os.listdir("dependencies")
+    if os.path.isdir(os.path.join("dependencies", f)) and not f.startswith('.')
+]
+brand_list = brand_folders
+
+# 嘗試讀取上次選擇的品牌，如無則預設使用 brand_list[0]（若有需要可自行調整預設值）
+if os.path.exists(selected_brand_file):
+    with open(selected_brand_file, "r", encoding="utf-8") as f:
+        last_selected_brand = f.read().strip()
+    if last_selected_brand not in brand_list:
+        # 如果檔案中記載的品牌不在目前資料夾中，就以第一個品牌當預設
+        last_selected_brand = brand_list[0] if brand_list else ""
+else:
+    if brand_list:
+        last_selected_brand = brand_list[0]
+        with open(selected_brand_file, "w", encoding="utf-8") as f:
+            f.write(last_selected_brand)
+    else:
+        # 沒有任何品牌資料夾時就給個空值
+        last_selected_brand = ""
+
 with tab1:
-    resnet = load_resnet_model()
-    preprocess = get_preprocess_transforms()
-
-    brand_dependencies = {
-        "ADS": {
-            "train_file": "dependencies/image_features.pkl",
-            "angle_filename_reference": "dependencies/ADS檔名角度對照表.xlsx",
-        },
-    }
-
     if 'file_uploader_key1' not in st.session_state:
         st.session_state['file_uploader_key1'] = 0
     if 'text_area_key1' not in st.session_state:
@@ -470,8 +559,10 @@ with tab1:
         st.session_state['previous_uploaded_file_name_tab1'] = None
     if 'previous_input_path_tab1' not in st.session_state:
         st.session_state['previous_input_path_tab1'] = None
+    
+    resnet = load_resnet_model()
+    preprocess = get_preprocess_transforms()
 
-    brand_list = list(brand_dependencies.keys())
     st.write("\n")
     col1, col2 = st.columns([1.6, 1])
 
@@ -496,98 +587,159 @@ with tab1:
         st.session_state["input_path_from_tab1"] = input_path
 
     if uploaded_zip or input_path:
-        col1, col2, col3 = st.columns([1.5, 2, 2], vertical_alignment="center", gap="medium")
-        selectbox_placeholder = col1.empty()
-        button_placeholder = col2.empty()
+        col1_, col2_, col3_ = st.columns([1.5, 2, 2], vertical_alignment="center", gap="medium")
+        selectbox_placeholder = col1_.empty()
+        button_placeholder = col2_.empty()
+
         with selectbox_placeholder:
-            selected_brand = st.selectbox(
-                "請選擇品牌", brand_list, label_visibility="collapsed")
+            # 使用先前取得的 brand_list 與 last_selected_brand
+            if brand_list:
+                # 如果有可用品牌，預設選到上次選擇的品牌
+                selected_brand_index = brand_list.index(last_selected_brand) if last_selected_brand in brand_list else 0
+                selected_brand = st.selectbox("請選擇品牌", brand_list, index=selected_brand_index, label_visibility="collapsed")
+            else:
+                # 如果沒有任何品牌資料夾
+                selected_brand = st.selectbox("請選擇品牌", [], label_visibility="collapsed")
+
+        if selected_brand != last_selected_brand and selected_brand != "":
+            # 使用者切換品牌，更新至檔案
+            with open(selected_brand_file, "w", encoding="utf-8") as f:
+                f.write(selected_brand)
+
         with button_placeholder:
             start_running = st.button("開始執行")
 
-        dependencies = brand_dependencies[selected_brand]
-        train_file = dependencies["train_file"]
-        angle_filename_reference = dependencies["angle_filename_reference"]
-        
-        category_settings_df = pd.read_excel(angle_filename_reference, sheet_name="基本設定", usecols=["商品分類","編圖上限","編圖起始號碼","指定前綴"])
+        # 只有在使用者點擊「開始執行」時，才去找對應品牌檔案
+        if (uploaded_zip or input_path) and start_running:
+            if not selected_brand:
+                st.error("未偵測到任何品牌資料夾，請確認 'dependencies' 下是否有子資料夾。")
+                st.stop()
 
-        category_settings = {}
-        for i, row in category_settings_df.iterrows():
-            cat = row["商品分類"]
-            limits_str = str(row["編圖上限"])
-            starts_str = str(row["編圖起始號碼"])
-            prefix_str = str(row["指定前綴"]).strip()
-            if ',' in prefix_str:
-                prefix_list = [p.strip() for p in prefix_str.split(',')]
-                limits_list = [int(x.strip()) for x in limits_str.split(',')]
-                starts_list = [int(x.strip()) for x in starts_str.split(',')]
-                category_settings[cat] = {
-                    "prefix_mode": "multi",
-                    "prefixes": prefix_list,
-                    "label_limits": limits_list,
-                    "start_numbers": starts_list
-                }
-            else:
-                prefix = prefix_str if prefix_str not in ['nan', ''] else None
-                limit = int(limits_str)
-                start_num = int(starts_str)
-                category_settings[cat] = {
-                    "prefix_mode": "single",
-                    "prefix": prefix,
-                    "label_limit": limit,
-                    "start_number": start_num
-                }
+            # 由我們撰寫的 find_brand_files() 動態找 train_file 與 angle_filename_reference
+            train_file, angle_filename_reference = find_brand_files(selected_brand)
+            if not train_file or not angle_filename_reference:
+                st.error(f"在品牌 {selected_brand} 資料夾中，無法找到 'image_features' pkl 或 '檔名角度對照表' xlsx！")
+                st.stop()
 
-        if "其他" not in category_settings:
-            category_settings["其他"] = {
-                "prefix_mode": "single",
-                "prefix": None,
-                "label_limit": 3,
-                "start_number": 1
-            }
+            category_settings_df = pd.read_excel(
+                angle_filename_reference,
+                sheet_name="基本設定",
+                usecols=["商品分類", "編圖上限", "編圖起始號碼", "指定前綴"]
+            )
 
-        keywords_to_skip = pd.read_excel(angle_filename_reference, sheet_name='不編的檔名', usecols=[0]).iloc[:, 0].dropna().astype(str).tolist()
-        substitute_df = pd.read_excel(angle_filename_reference, sheet_name='有條件使用的檔名', usecols=[0, 1])
-        substitute = [{"set_a": row.iloc[0].split(','), "set_b": row.iloc[1].split(',')} for _, row in substitute_df.iterrows()]
-        
-        reassigned_allowed = pd.read_excel(angle_filename_reference, sheet_name='可以重複分配的角度', usecols=[0]).iloc[:, 0].dropna().tolist()
-        
-        angle_banning_df = pd.read_excel(angle_filename_reference, sheet_name='角度禁止規則', usecols=[0, 1, 2])
-        angle_banning_rules = [{"if_appears_in_angle": row.iloc[0].split(','), "banned_angle": row.iloc[1], "banned_angle_logic": row.iloc[2]} for _, row in angle_banning_df.iterrows()]
-        
-        category_rules_df = pd.read_excel(angle_filename_reference, sheet_name='商品分類及關鍵字條件', usecols=[0, 1, 2])
-        category_rules = {row.iloc[0]: {"keywords": row.iloc[1].split(','), "match_all": row.iloc[2]} for _, row in category_rules_df.iterrows()}
-        
-        features_by_category = load_image_features_with_ivf(train_file)
-        original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
+            category_settings = {}
+            for i, row in category_settings_df.iterrows():
+                cat = row["商品分類"]
+                limits_str = str(row["編圖上限"])
+                starts_str = str(row["編圖起始號碼"])
+                prefix_str = str(row["指定前綴"]).strip()
 
-    if (uploaded_zip or input_path) and start_running:
-        selectbox_placeholder.empty()
-        button_placeholder.empty()
-        
-        if os.path.exists("uploaded_images") and os.path.isdir("uploaded_images"):
-            shutil.rmtree("uploaded_images")
-
-        if os.path.exists("temp.zip") and os.path.isfile("temp.zip"):
-            os.remove("temp.zip")
-            
-        with st.spinner("讀取檔案中，請稍候..."):
-            if uploaded_zip:
-                with open("temp.zip", "wb") as f:
-                    f.write(uploaded_zip.getbuffer())
-                unzip_file("temp.zip")
-            elif input_path:
-                if not os.path.exists(input_path):
-                    st.error("指定的本地路徑不存在，請重新輸入。")
-                    st.stop()
+                if ',' in prefix_str:
+                    prefix_list = [p.strip() for p in prefix_str.split(',')]
+                    limits_list = [int(x.strip()) for x in limits_str.split(',')]
+                    starts_list = [int(x.strip()) for x in starts_str.split(',')]
+                    category_settings[cat] = {
+                        "prefix_mode": "multi",
+                        "prefixes": prefix_list,
+                        "label_limits": limits_list,
+                        "start_numbers": starts_list
+                    }
                 else:
-                    shutil.copytree(input_path, "uploaded_images")
+                    prefix = prefix_str if prefix_str not in ['nan', ''] else None
+                    limit = int(limits_str)
+                    start_num = int(starts_str)
+                    category_settings[cat] = {
+                        "prefix_mode": "single",
+                        "prefix": prefix,
+                        "label_limit": limit,
+                        "start_number": start_num
+                    }
 
-        special_mappings = {}
-        angle_to_prefix = {}
-        prefix_to_category = {}
+            if "其他" not in category_settings:
+                category_settings["其他"] = {
+                    "prefix_mode": "single",
+                    "prefix": None,
+                    "label_limit": 3,
+                    "start_number": 1
+                }
 
-        if selected_brand == "ADS":
+            keywords_to_skip = pd.read_excel(
+                angle_filename_reference,
+                sheet_name='不編的檔名',
+                usecols=[0]
+            ).iloc[:, 0].dropna().astype(str).tolist()
+
+            substitute_df = pd.read_excel(
+                angle_filename_reference,
+                sheet_name='有條件使用的檔名',
+                usecols=[0, 1]
+            )
+            substitute = [
+                {"set_a": row.iloc[0].split(','), "set_b": row.iloc[1].split(',')}
+                for _, row in substitute_df.iterrows()
+            ]
+            
+            reassigned_allowed = pd.read_excel(
+                angle_filename_reference,
+                sheet_name='可以重複分配的角度',
+                usecols=[0]
+            ).iloc[:, 0].dropna().tolist()
+            
+            angle_banning_df = pd.read_excel(
+                angle_filename_reference,
+                sheet_name='角度禁止規則',
+                usecols=[0, 1, 2]
+            )
+            angle_banning_rules = [
+                {
+                    "if_appears_in_angle": row.iloc[0].split(','),
+                    "banned_angle": row.iloc[1],
+                    "banned_angle_logic": row.iloc[2]
+                }
+                for _, row in angle_banning_df.iterrows()
+            ]
+            
+            category_rules_df = pd.read_excel(
+                angle_filename_reference,
+                sheet_name='商品分類及關鍵字條件',
+                usecols=[0, 1, 2]
+            )
+            category_rules = {
+                row.iloc[0]: {
+                    "keywords": row.iloc[1].split(','),
+                    "match_all": row.iloc[2]
+                }
+                for _, row in category_rules_df.iterrows()
+            }
+            
+            features_by_category = load_image_features_with_ivf(train_file)
+            original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
+
+            selectbox_placeholder.empty()
+            button_placeholder.empty()
+            
+            if os.path.exists("uploaded_images") and os.path.isdir("uploaded_images"):
+                shutil.rmtree("uploaded_images")
+
+            if os.path.exists("temp.zip") and os.path.isfile("temp.zip"):
+                os.remove("temp.zip")
+                
+            with st.spinner("讀取檔案中，請稍候..."):
+                if uploaded_zip:
+                    with open("temp.zip", "wb") as f:
+                        f.write(uploaded_zip.getbuffer())
+                    unzip_file("temp.zip")
+                elif input_path:
+                    if not os.path.exists(input_path):
+                        st.error("指定的本地路徑不存在，請重新輸入。")
+                        st.stop()
+                    else:
+                        shutil.copytree(input_path, "uploaded_images")
+
+            special_mappings = {}
+            angle_to_prefix = {}
+            prefix_to_category = {}
+
             df_angles = pd.read_excel(angle_filename_reference, sheet_name="檔名角度對照表")
             for idx, row in df_angles.iterrows():
                 keyword = str(row.iloc[0]).strip()
@@ -621,394 +773,382 @@ with tab1:
                 if prefix:
                     prefix_to_category[prefix] = category
 
-        folder_settings = {}
-
-        image_folders = [
-            f for f in os.listdir("uploaded_images") 
-            if os.path.isdir(os.path.join("uploaded_images", f)) 
-            and not f.startswith('__MACOSX') and not f.startswith('.')
-        ]
-        results = []
-        skipped_images = []
-        progress_bar = st.progress(0)
-        progress_text = st.empty()
-    
-        total_folders = len(image_folders)
-        processed_folders = 0
-    
-        group_conditions = substitute
-
-        for folder in image_folders:
-            features_by_category = {k: v.copy() for k, v in original_features_by_category.items()}
-    
-            folder_path = os.path.join("uploaded_images", folder)
-            image_files, use_two_img_folder = get_images_in_folder(folder_path)
-            folder_settings[folder] = use_two_img_folder
-
-            if not image_files:
-                st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
-                continue
-            folder_features = []
-    
-            progress_text.text(f"正在處理資料夾: {folder}")
-    
-            special_images = []
-            folder_special_category = None
-
-            group_presence = []
-            for group in group_conditions:
-                group_presence.append({
-                    "set_a_present": False,
-                    "set_b_present": False
-                })
-    
-            for image_file, image_path in image_files:
-                if image_file.startswith('.') or os.path.isdir(image_path):
-                    continue
-                for idx, group in enumerate(group_conditions):
-                    if any(substr in image_file for substr in group["set_a"]):
-                        group_presence[idx]["set_a_present"] = True
-                    if any(substr in image_file for substr in group["set_b"]):
-                        group_presence[idx]["set_b_present"] = True
-            image_filenames = [img[0] for img in image_files]
-
-            for image_file, image_path in image_files:
-                if image_file.startswith('.') or os.path.isdir(image_path):
-                    continue
-                if any(keyword in image_file for keyword in keywords_to_skip):
-                    skipped_images.append({
-                        "資料夾": folder, 
-                        "圖片": image_file
-                    })
-                    continue
-
-                skip_image = False
-                for idx, group in enumerate(group_conditions):
-                    if any(substr in image_file for substr in group["set_b"]):
-                        if group_presence[idx]["set_a_present"] and group_presence[idx]["set_b_present"]:
-                            skipped_images.append({
-                                "資料夾": folder, 
-                                "圖片": image_file
-                            })
-                            skip_image = True
-                            break
-                if skip_image:
-                    continue
-
-                special_angles = []
-                special_category = None
-                category_filename = None
-                if special_mappings:
-                    for substr, mapping in special_mappings.items():
-                        if substr in image_file:
-                            special_angles = mapping['angles']
-                            special_category = mapping['category']
-                            category_filename = mapping.get('category_filename')
-                            if category_filename:
-                                if any(cond in fname for fname in image_filenames for cond in category_filename):
-                                    pass
-                                else:
-                                    special_category = None 
-                            if special_category and not folder_special_category:
-                                folder_special_category = special_category
-                            break
-
-                # 這裡是修改點：加入 try-except，以處理 tif 檔
-                try:
-                    img = Image.open(image_path).convert('RGB')
-                except UnidentifiedImageError:
-                    with open(image_path, 'rb') as f:
-                        raw_data = f.read()
-                        decoded_data = imagecodecs.tiff_decode(raw_data)
-                        img = Image.fromarray(decoded_data).convert('RGB')
-
-                img_features = get_image_features(img, resnet)
-                folder_features.append({
-                    "image_file": image_file,
-                    "features": img_features,
-                    "special_angles": special_angles,
-                    "special_category": special_category
-                })
-
-                if special_angles:
-                    special_images.append({
-                        "image_file": image_file,
-                        "special_angles": special_angles
-                    })
-
-            if len(folder_features) == 0:
-                st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
-                continue
-
-            for category, rule in category_rules.items():
-                if category in features_by_category[selected_brand]:
-                    if not category_match([file[0] for file in image_files], rule["keywords"], rule["match_all"]):
-                        features_by_category[selected_brand].pop(category, None)
-
-            if folder_special_category:
-                best_category = {
-                    'brand': selected_brand, 
-                    'category': folder_special_category
-                }
-            else:
-                category_similarities = {}
-                for brand in features_by_category:
-                    for category in features_by_category[brand]:
-                        index = features_by_category[brand][category]["index"]
-                        num_samples = len(features_by_category[brand][category]["labeled_features"])
-                        nlist = index.nlist
-                        nprobe = max(1, int(np.sqrt(nlist)))
-                        index.nprobe = nprobe
-                        folder_similarities = []
-                        
-                        for img_data in folder_features:
-                            img_features = img_data["features"].astype(np.float32).reshape(1, -1)
-                            img_features = l2_normalize(img_features)
-                            similarities, _ = index.search(img_features, k=5)
-                            avg_similarity = np.mean(similarities)
-                            folder_similarities.append(avg_similarity)
-                        
-                        category_similarities[category] = np.mean(folder_similarities)
-                if category_similarities:
-                    best_category_name = max(category_similarities, key=category_similarities.get)
-                    best_category = {
-                        'brand': selected_brand,
-                        'category': best_category_name
-                    }
-                else:
-                    st.warning(f"資料夾 {folder} 無法匹配任何分類，跳過此資料夾")
-                    continue
-
-            filtered_by_category = features_by_category[selected_brand][
-                best_category["category"]
-            ]["labeled_features"]
-
-            angle_to_number = {
-                item["labels"]["angle"]: item["labels"]["number"] 
-                for item in filtered_by_category
-            }
-
-            used_angles = set()
-            final_results = {}
-            rule_flags = [False for _ in angle_banning_rules]
-
-            for img_data in folder_features:
-                image_file = img_data["image_file"]
-                special_angles = img_data["special_angles"]
-                special_category = img_data["special_category"]
-                if special_angles:
-                    angle = special_angles[0]
-                    category = special_category if special_category else best_category["category"]
-                    specified_prefix = angle_to_prefix.get((angle, category))
-                    if specified_prefix is None:
-                        specified_prefix = angle_to_prefix.get((angle, None), None)
-
-            for img_data in folder_features:
-                image_file = img_data["image_file"]
-                special_angles = img_data["special_angles"]
-                special_category = img_data["special_category"]
-                img_features = img_data["features"]
-                if special_angles:
-                    valid_special_angles = [
-                        angle for angle in special_angles 
-                        if angle in angle_to_number
-                    ]
-                    if valid_special_angles:
-                        if len(valid_special_angles) > 1:
-                            valid_angles_by_similarity = []
-                            for angle in valid_special_angles:
-                                index = features_by_category[selected_brand][best_category["category"]]["index"]
-                                num_samples = len(features_by_category[selected_brand][best_category["category"]]["labeled_features"])
-                                nlist = index.nlist
-                                nprobe = max(1, int(np.sqrt(nlist)))
-                                index.nprobe = nprobe
-                                angle_features = [
-                                    item["features"] for item in filtered_by_category 
-                                    if item["labels"]["angle"] == angle
-                                ]
-                                if not angle_features:
-                                    continue
-                                angle_features = np.array(angle_features, dtype=np.float32)
-                                angle_features = l2_normalize(angle_features)
-                                temp_index = faiss.IndexFlatIP(angle_features.shape[1])
-                                temp_index.add(angle_features)
-                                img_query = l2_normalize(img_features.astype(np.float32).reshape(1, -1))
-                                similarities, _ = temp_index.search(img_query, k=1)
-                                similarity_percentage = similarities[0][0] * 100
-                                valid_angles_by_similarity.append(
-                                    (angle, similarity_percentage)
-                                )
-                            valid_angles_by_similarity.sort(
-                                key=lambda x: x[1], reverse=True
-                            )
-                            chosen_angle = None
-                            for angle, similarity_percentage in valid_angles_by_similarity:
-                                if angle not in reassigned_allowed and angle in used_angles:
-                                    pass
-                                else:
-                                    chosen_angle = angle
-                                    best_similarity = similarity_percentage
-                                    break
-                            
-                            if chosen_angle:
-                                prefix = angle_to_prefix.get((chosen_angle, best_category["category"]), angle_to_prefix.get((chosen_angle, None), None))
-                                # 若基本設定為空值prefix則用folder為prefix
-                                cat_setting = category_settings.get(best_category["category"], category_settings.get("其他"))
-                                if cat_setting["prefix_mode"] == "single" and cat_setting["prefix"] is None:
-                                    prefix = folder
-
-                                used_angles.add(chosen_angle)
-                                final_results[image_file] = {
-                                    "資料夾": folder,
-                                    "圖片": image_file,
-                                    "商品分類": best_category["category"],
-                                    "角度": chosen_angle,
-                                    "編號": angle_to_number[chosen_angle],
-                                    "最大相似度": f"{best_similarity:.2f}%",
-                                    "最終前綴": prefix
-                                }
-                                for idx, rule in enumerate(angle_banning_rules):
-                                    if chosen_angle in rule["if_appears_in_angle"]:
-                                        rule_flags[idx] = True
-                            else:
-                                final_results[image_file] = None
-                                old_image_path = os.path.join(folder_path, image_file)
-                                new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
-                                if os.path.exists(old_image_path):
-                                    os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
-                                    os.rename(old_image_path, new_image_path)
-                        else:
-                            special_angle = valid_special_angles[0]
-                            if special_angle not in reassigned_allowed and special_angle in used_angles:
-                                final_results[image_file] = None
-                                old_image_path = os.path.join(folder_path, image_file)
-                                new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
-                                if os.path.exists(old_image_path):
-                                    os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
-                                    os.rename(old_image_path, new_image_path)
-                            else:
-                                prefix = angle_to_prefix.get((special_angle, best_category["category"]), angle_to_prefix.get((special_angle, None), None))
-                                # 若基本設定為空值prefix則用folder為prefix
-                                cat_setting = category_settings.get(best_category["category"], category_settings.get("其他"))
-                                if cat_setting["prefix_mode"] == "single" and cat_setting["prefix"] is None:
-                                    prefix = folder
-
-                                used_angles.add(special_angle)
-                                final_results[image_file] = {
-                                    "資料夾": folder,
-                                    "圖片": image_file,
-                                    "商品分類": best_category["category"],
-                                    "角度": special_angle,
-                                    "編號": angle_to_number[special_angle],
-                                    "最大相似度": "100.00%",
-                                    "最終前綴": prefix
-                                }
-                                for idx, rule in enumerate(angle_banning_rules):
-                                    if special_angle in rule["if_appears_in_angle"]:
-                                        rule_flags[idx] = True
-                    else:
-                        if best_category['category'] == "帽子" and "白背上腳照" in special_angles:
-                            old_image_path = os.path.join(folder_path, image_file)
-                            new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
-                            if os.path.exists(old_image_path):
-                                os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
-                                os.rename(old_image_path, new_image_path)
-                        else:
-                            final_results[image_file] = None
-                            old_image_path = os.path.join(folder_path, image_file)
-                            new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
-                            if os.path.exists(old_image_path):
-                                os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
-                                os.rename(old_image_path, new_image_path)
-
-            non_special_images = [
-                img_data for img_data in folder_features 
-                if not img_data["special_angles"]
+            folder_settings = {}
+            image_folders = [
+                f for f in os.listdir("uploaded_images")
+                if os.path.isdir(os.path.join("uploaded_images", f)) 
+                and not f.startswith('__MACOSX') 
+                and not f.startswith('.')
             ]
 
-            if not special_mappings:
-                non_special_images = folder_features
+            results = []
+            skipped_images = []
+            progress_bar = st.progress(0)
+            progress_text = st.empty()
+        
+            total_folders = len(image_folders)
+            processed_folders = 0
+        
+            group_conditions = substitute
 
-            image_similarity_store = {}
-            labeled_features = filtered_by_category
-            features = np.array([item["features"] for item in labeled_features], dtype=np.float32)
-            features = l2_normalize(features)
-            labels = [item["labels"] for item in labeled_features]
-            index = features_by_category[selected_brand][best_category["category"]]["index"]
-            num_samples = len(features_by_category[selected_brand][best_category["category"]]["labeled_features"])
-            nlist = index.nlist
-            nprobe = max(1, int(np.sqrt(nlist)))
-            index.nprobe = nprobe
+            for folder in image_folders:
+                features_by_category = {k: v.copy() for k, v in original_features_by_category.items()}
+        
+                folder_path = os.path.join("uploaded_images", folder)
+                image_files, use_two_img_folder = get_images_in_folder(folder_path)
+                folder_settings[folder] = use_two_img_folder
 
-            for img_data in non_special_images:
-                image_file = img_data["image_file"]
-                if final_results.get(image_file) is not None:
+                if not image_files:
+                    st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
                     continue
-                img_features = img_data["features"].astype(np.float32).reshape(1, -1)
-                img_features = l2_normalize(img_features)
-                similarities, indices = index.search(img_features, k=len(labels))
-                similarities = similarities.flatten()
-                similarity_percentages = (similarities * 100).clip(0, 100)
-                image_similarity_list = []
-                for idx_, similarity_percentage in zip(indices[0], similarity_percentages):
-                    label = labels[idx_]
-                    item_angle = label["angle"]
-                    if is_banned_angle(item_angle, rule_flags):
-                        continue
-                    image_similarity_list.append({
-                        "image_file": image_file,
-                        "similarity": similarity_percentage,
-                        "label": label,
-                        "folder": folder
+                folder_features = []
+        
+                progress_text.text(f"正在處理資料夾: {folder}")
+        
+                special_images = []
+                folder_special_category = None
+
+                group_presence = []
+                for group in group_conditions:
+                    group_presence.append({
+                        "set_a_present": False,
+                        "set_b_present": False
                     })
-                unique_labels = []
-                seen_angles = set()
-                for candidate in image_similarity_list:
-                    angle = candidate["label"]["angle"]
-                    if angle not in seen_angles:
-                        unique_labels.append(candidate)
-                        seen_angles.add(angle)
-                    if len(unique_labels) == len(labels):
-                        break
-                image_similarity_store[image_file] = unique_labels
 
-            unassigned_images = set(image_similarity_store.keys())
+                image_filenames = [img[0] for img in image_files]
 
-            while unassigned_images:
-                angle_to_images = {}
-                image_current_choices = {}
-                
-                for image_file in unassigned_images:
-                    similarity_list = image_similarity_store[image_file]
-                    candidate = None
-                    for candidate_candidate in similarity_list:
-                        candidate_angle = candidate_candidate["label"]["angle"]
-                        if is_banned_angle(candidate_angle, rule_flags):
-                            continue
-                        if candidate_angle not in reassigned_allowed and candidate_angle in used_angles:
-                            continue
-                        candidate = candidate_candidate
-                        break
+                for image_file, image_path in image_files:
+                    if image_file.startswith('.') or os.path.isdir(image_path):
+                        continue
+                    for idx, group in enumerate(group_conditions):
+                        if any(substr in image_file for substr in group["set_a"]):
+                            group_presence[idx]["set_a_present"] = True
+                        if any(substr in image_file for substr in group["set_b"]):
+                            group_presence[idx]["set_b_present"] = True
+
+                for image_file, image_path in image_files:
+                    if image_file.startswith('.') or os.path.isdir(image_path):
+                        continue
+                    if any(keyword in image_file for keyword in keywords_to_skip):
+                        skipped_images.append({"資料夾": folder, "圖片": image_file})
+                        continue
+
+                    skip_image = False
+                    for idx, group in enumerate(group_conditions):
+                        if any(substr in image_file for substr in group["set_b"]):
+                            if group_presence[idx]["set_a_present"] and group_presence[idx]["set_b_present"]:
+                                skipped_images.append({"資料夾": folder, "圖片": image_file})
+                                skip_image = True
+                                break
+                    if skip_image:
+                        continue
+
+                    special_angles = []
+                    special_category = None
+                    category_filename = None
+                    if special_mappings:
+                        for substr, mapping in special_mappings.items():
+                            if substr in image_file:
+                                special_angles = mapping['angles']
+                                special_category = mapping['category']
+                                category_filename = mapping.get('category_filename')
+                                if category_filename:
+                                    # 需檢查這些 keyword 是否確實出現在所有檔名
+                                    if any(cond in fname for fname in image_filenames for cond in category_filename):
+                                        pass
+                                    else:
+                                        special_category = None
+                                if special_category and not folder_special_category:
+                                    folder_special_category = special_category
+                                break
+
+                    try:
+                        img = Image.open(image_path).convert('RGB')
+                    except UnidentifiedImageError:
+                        with open(image_path, 'rb') as f:
+                            raw_data = f.read()
+                            decoded_data = imagecodecs.tiff_decode(raw_data)
+                            img = Image.fromarray(decoded_data).convert('RGB')
+
+                    img_features = get_image_features(img, resnet)
+                    folder_features.append({
+                        "image_file": image_file,
+                        "features": img_features,
+                        "special_angles": special_angles,
+                        "special_category": special_category
+                    })
+
+                    if special_angles:
+                        special_images.append({
+                            "image_file": image_file,
+                            "special_angles": special_angles
+                        })
+
+                if len(folder_features) == 0:
+                    st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
+                    continue
+
+                for category, rule in category_rules.items():
+                    if category in features_by_category[selected_brand]:
+                        if not category_match([file[0] for file in image_files], rule["keywords"], rule["match_all"]):
+                            features_by_category[selected_brand].pop(category, None)
+
+                if folder_special_category:
+                    best_category = {
+                        'brand': selected_brand,
+                        'category': folder_special_category
+                    }
+                else:
+                    category_similarities = {}
+                    for brand in features_by_category:
+                        for category in features_by_category[brand]:
+                            index = features_by_category[brand][category]["index"]
+                            nlist = index.nlist
+                            nprobe = max(1, int(np.sqrt(nlist)))
+                            index.nprobe = nprobe
+                            folder_similarities = []
+                            
+                            for img_data in folder_features:
+                                img_features = img_data["features"].astype(np.float32).reshape(1, -1)
+                                img_features = l2_normalize(img_features)
+                                similarities, _ = index.search(img_features, k=5)
+                                avg_similarity = np.mean(similarities)
+                                folder_similarities.append(avg_similarity)
+                            
+                            category_similarities[category] = np.mean(folder_similarities)
+
+                    if category_similarities:
+                        best_category_name = max(category_similarities, key=category_similarities.get)
+                        best_category = {
+                            'brand': selected_brand,
+                            'category': best_category_name
+                        }
                     else:
-                        candidate = None
-                        candidate_angle = None
+                        st.warning(f"資料夾 {folder} 無法匹配任何分類，跳過此資料夾")
+                        continue
 
-                    if candidate:
-                        candidate_angle = candidate["label"]["angle"]
-                        image_current_choices[image_file] = candidate
-                        if candidate_angle not in angle_to_images:
-                            angle_to_images[candidate_angle] = []
-                        angle_to_images[candidate_angle].append(image_file)
-                
-                assigned_in_this_round = set()
-                for angle, images_ in angle_to_images.items():
-                    if angle in reassigned_allowed:
-                        for image_file in images_:
+                filtered_by_category = features_by_category[selected_brand][best_category["category"]]["labeled_features"]
+                angle_to_number = {
+                    item["labels"]["angle"]: item["labels"]["number"] 
+                    for item in filtered_by_category
+                }
+
+                used_angles = set()
+                final_results = {}
+                rule_flags = [False for _ in angle_banning_rules]
+
+                # 先處理 special_angles
+                for img_data in folder_features:
+                    image_file = img_data["image_file"]
+                    special_angles = img_data["special_angles"]
+                    special_category = img_data["special_category"]
+                    if special_angles:
+                        angle = special_angles[0]
+                        category = special_category if special_category else best_category["category"]
+                        specified_prefix = angle_to_prefix.get((angle, category))
+                        if specified_prefix is None:
+                            specified_prefix = angle_to_prefix.get((angle, None), None)
+
+                # 處理所有 special_images
+                for img_data in folder_features:
+                    image_file = img_data["image_file"]
+                    special_angles = img_data["special_angles"]
+                    special_category = img_data["special_category"]
+                    img_features = img_data["features"]
+
+                    if special_angles:
+                        valid_special_angles = [angle for angle in special_angles if angle in angle_to_number]
+                        if valid_special_angles:
+                            if len(valid_special_angles) > 1:
+                                valid_angles_by_similarity = []
+                                for angle in valid_special_angles:
+                                    index = features_by_category[selected_brand][best_category["category"]]["index"]
+                                    nlist = index.nlist
+                                    nprobe = max(1, int(np.sqrt(nlist)))
+                                    index.nprobe = nprobe
+                                    angle_features = [
+                                        item["features"] for item in filtered_by_category
+                                        if item["labels"]["angle"] == angle
+                                    ]
+                                    if not angle_features:
+                                        continue
+                                    angle_features = np.array(angle_features, dtype=np.float32)
+                                    angle_features = l2_normalize(angle_features)
+                                    temp_index = faiss.IndexFlatIP(angle_features.shape[1])
+                                    temp_index.add(angle_features)
+                                    img_query = l2_normalize(img_features.astype(np.float32).reshape(1, -1))
+                                    similarities, _ = temp_index.search(img_query, k=1)
+                                    similarity_percentage = similarities[0][0] * 100
+                                    valid_angles_by_similarity.append((angle, similarity_percentage))
+
+                                valid_angles_by_similarity.sort(key=lambda x: x[1], reverse=True)
+                                chosen_angle = None
+                                for angle, similarity_percentage in valid_angles_by_similarity:
+                                    if angle not in reassigned_allowed and angle in used_angles:
+                                        pass
+                                    else:
+                                        chosen_angle = angle
+                                        best_similarity = similarity_percentage
+                                        break
+                                
+                                if chosen_angle:
+                                    prefix = get_prefix(chosen_angle, best_category, folder, angle_to_prefix)
+                                    used_angles.add(chosen_angle)
+                                    final_results[image_file] = {
+                                        "資料夾": folder,
+                                        "圖片": image_file,
+                                        "商品分類": best_category["category"],
+                                        "角度": chosen_angle,
+                                        "編號": angle_to_number[chosen_angle],
+                                        "最大相似度": f"{best_similarity:.2f}%",
+                                        "最終前綴": prefix
+                                    }
+                                    for idx, rule in enumerate(angle_banning_rules):
+                                        if chosen_angle in rule["if_appears_in_angle"]:
+                                            rule_flags[idx] = True
+                                else:
+                                    final_results[image_file] = None
+                                    old_image_path = os.path.join(folder_path, image_file)
+                                    new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
+                                    if os.path.exists(old_image_path):
+                                        os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+                                        os.rename(old_image_path, new_image_path)
+                            else:
+                                special_angle = valid_special_angles[0]
+                                if special_angle not in reassigned_allowed and special_angle in used_angles:
+                                    final_results[image_file] = None
+                                    old_image_path = os.path.join(folder_path, image_file)
+                                    new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
+                                    if os.path.exists(old_image_path):
+                                        os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+                                        os.rename(old_image_path, new_image_path)
+                                else:
+                                    prefix = get_prefix(special_angle, best_category, folder, angle_to_prefix)
+                                    used_angles.add(special_angle)
+                                    final_results[image_file] = {
+                                        "資料夾": folder,
+                                        "圖片": image_file,
+                                        "商品分類": best_category["category"],
+                                        "角度": special_angle,
+                                        "編號": angle_to_number[special_angle],
+                                        "最大相似度": "100.00%",
+                                        "最終前綴": prefix
+                                    }
+                                    for idx, rule in enumerate(angle_banning_rules):
+                                        if special_angle in rule["if_appears_in_angle"]:
+                                            rule_flags[idx] = True
+                        else:
+                            if best_category['category'] == "帽子" and "白背上腳照" in special_angles:
+                                old_image_path = os.path.join(folder_path, image_file)
+                                new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
+                                if os.path.exists(old_image_path):
+                                    os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+                                    os.rename(old_image_path, new_image_path)
+                            else:
+                                final_results[image_file] = None
+                                old_image_path = os.path.join(folder_path, image_file)
+                                new_image_path = os.path.join("uploaded_images", folder, os.path.basename(image_file))
+                                if os.path.exists(old_image_path):
+                                    os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
+                                    os.rename(old_image_path, new_image_path)
+
+                non_special_images = [img_data for img_data in folder_features if not img_data["special_angles"]]
+                if not special_mappings:
+                    non_special_images = folder_features
+
+                image_similarity_store = {}
+                labeled_features = filtered_by_category
+                features = np.array([item["features"] for item in labeled_features], dtype=np.float32)
+                features = l2_normalize(features)
+                labels = [item["labels"] for item in labeled_features]
+                index = features_by_category[selected_brand][best_category["category"]]["index"]
+                nlist = index.nlist
+                nprobe = max(1, int(np.sqrt(nlist)))
+                index.nprobe = nprobe
+
+                # 為 non_special_images 進行相似度匹配
+                for img_data in non_special_images:
+                    image_file = img_data["image_file"]
+                    if final_results.get(image_file) is not None:
+                        continue
+                    img_features = img_data["features"].astype(np.float32).reshape(1, -1)
+                    img_features = l2_normalize(img_features)
+                    similarities, indices = index.search(img_features, k=len(labels))
+                    similarities = similarities.flatten()
+                    similarity_percentages = (similarities * 100).clip(0, 100)
+                    image_similarity_list = []
+                    for idx_, similarity_percentage in zip(indices[0], similarity_percentages):
+                        label = labels[idx_]
+                        item_angle = label["angle"]
+                        if is_banned_angle(item_angle, rule_flags):
+                            continue
+                        image_similarity_list.append({
+                            "image_file": image_file,
+                            "similarity": similarity_percentage,
+                            "label": label,
+                            "folder": folder
+                        })
+
+                    unique_labels = []
+                    seen_angles = set()
+                    for candidate in image_similarity_list:
+                        angle = candidate["label"]["angle"]
+                        if angle not in seen_angles:
+                            unique_labels.append(candidate)
+                            seen_angles.add(angle)
+                        if len(unique_labels) == len(labels):
+                            break
+                    image_similarity_store[image_file] = unique_labels
+
+                unassigned_images = set(image_similarity_store.keys())
+
+                # 依類似度排名將 non_special_images 分配角度
+                while unassigned_images:
+                    angle_to_images = {}
+                    image_current_choices = {}
+                    
+                    for image_file in unassigned_images:
+                        similarity_list = image_similarity_store[image_file]
+                        candidate = None
+                        for candidate_candidate in similarity_list:
+                            candidate_angle = candidate_candidate["label"]["angle"]
+                            if is_banned_angle(candidate_angle, rule_flags):
+                                continue
+                            if candidate_angle not in reassigned_allowed and candidate_angle in used_angles:
+                                continue
+                            candidate = candidate_candidate
+                            break
+                        else:
+                            candidate = None
+                            candidate_angle = None
+
+                        if candidate:
+                            candidate_angle = candidate["label"]["angle"]
+                            image_current_choices[image_file] = candidate
+                            if candidate_angle not in angle_to_images:
+                                angle_to_images[candidate_angle] = []
+                            angle_to_images[candidate_angle].append(image_file)
+                    
+                    assigned_in_this_round = set()
+                    for angle, images_ in angle_to_images.items():
+                        if angle in reassigned_allowed:
+                            for image_file in images_:
+                                candidate = image_current_choices[image_file]
+                                prefix = get_prefix(angle, candidate["label"], candidate["folder"], angle_to_prefix)
+                                final_results[image_file] = {
+                                    "資料夾": candidate["folder"],
+                                    "圖片": image_file,
+                                    "商品分類": candidate["label"]["category"],
+                                    "角度": angle,
+                                    "編號": candidate["label"]["number"],
+                                    "最大相似度": f"{candidate['similarity']:.2f}%",
+                                    "最終前綴": prefix
+                                }
+                                assigned_in_this_round.add(image_file)
+                        elif len(images_) == 1:
+                            image_file = images_[0]
                             candidate = image_current_choices[image_file]
-                            prefix = angle_to_prefix.get((angle, candidate["label"]["category"]), angle_to_prefix.get((angle, None), None))
-                            cat_setting = category_settings.get(candidate["label"]["category"], category_settings.get("其他"))
-                            if cat_setting["prefix_mode"] == "single" and cat_setting["prefix"] is None:
-                                prefix = candidate["folder"]
+                            prefix = get_prefix(angle, candidate["label"], candidate["folder"], angle_to_prefix)
                             final_results[image_file] = {
                                 "資料夾": candidate["folder"],
                                 "圖片": image_file,
@@ -1018,121 +1158,102 @@ with tab1:
                                 "最大相似度": f"{candidate['similarity']:.2f}%",
                                 "最終前綴": prefix
                             }
+                            used_angles.add(angle)
                             assigned_in_this_round.add(image_file)
-                    elif len(images_) == 1:
-                        image_file = images_[0]
-                        candidate = image_current_choices[image_file]
-                        prefix = angle_to_prefix.get((angle, candidate["label"]["category"]), angle_to_prefix.get((angle, None), None))
-                        cat_setting = category_settings.get(candidate["label"]["category"], category_settings.get("其他"))
-                        if cat_setting["prefix_mode"] == "single" and cat_setting["prefix"] is None:
-                            prefix = candidate["folder"]
-                        final_results[image_file] = {
-                            "資料夾": candidate["folder"],
-                            "圖片": image_file,
-                            "商品分類": candidate["label"]["category"],
-                            "角度": angle,
-                            "編號": candidate["label"]["number"],
-                            "最大相似度": f"{candidate['similarity']:.2f}%",
-                            "最終前綴": prefix
-                        }
-                        used_angles.add(angle)
-                        assigned_in_this_round.add(image_file)
+                        else:
+                            max_similarity = -np.inf
+                            best_image = None
+                            for image_file_ in images_:
+                                candidate = image_current_choices[image_file_]
+                                if candidate['similarity'] > max_similarity:
+                                    max_similarity = candidate['similarity']
+                                    best_image = image_file_
+                            candidate = image_current_choices[best_image]
+                            prefix = get_prefix(angle, candidate["label"], candidate["folder"], angle_to_prefix)
+                            final_results[best_image] = {
+                                "資料夾": candidate["folder"],
+                                "圖片": best_image,
+                                "商品分類": candidate["label"]["category"],
+                                "角度": angle,
+                                "編號": candidate["label"]["number"],
+                                "最大相似度": f"{candidate['similarity']:.2f}%",
+                                "最終前綴": prefix
+                            }
+                            used_angles.add(angle)
+                            assigned_in_this_round.add(best_image)
+
+                    unassigned_images -= assigned_in_this_round
+                    if not assigned_in_this_round:
+                        break
+
+                for image_file, assignment in final_results.items():
+                    if assignment is not None:
+                        results.append(assignment)
+
+                processed_folders += 1
+                progress_bar.progress(processed_folders / total_folders)
+
+            progress_bar.empty()
+            progress_text.empty()
+
+            results = rename_numbers_in_folder(results, category_settings, folder_settings, angle_to_prefix)
+
+            result_df = pd.DataFrame(results)
+            result_df = result_df[result_df['編號'].notna() | (result_df['編號'] == '超過上限')]
+            if "最終前綴" in result_df.columns:
+                result_df = result_df.drop(columns=["最終前綴"])
+
+            st.dataframe(result_df, hide_index=True, use_container_width=True)
+            
+            folder_data = []
+            for folder in image_folders:
+                folder_results = result_df[result_df['資料夾'] == folder]
+                valid_images = folder_results[
+                    (folder_results['編號'] != '超過上限') & (~folder_results['編號'].isna())
+                ]
+                num_images = len(valid_images)
+                if selected_brand == "ADS":
+                    ad_images = valid_images[valid_images['角度'].str.contains('情境|HM')]
+                    num_ad_images = len(ad_images)
+                    if num_ad_images > 0:
+                        ad_image_value = f"{num_ad_images + 1:02}"
                     else:
-                        max_similarity = -np.inf
-                        best_image = None
-                        for image_file_ in images_:
-                            candidate = image_current_choices[image_file_]
-                            if candidate['similarity'] > max_similarity:
-                                max_similarity = candidate['similarity']
-                                best_image = image_file_
-                        candidate = image_current_choices[best_image]
-                        prefix = angle_to_prefix.get((angle, candidate["label"]["category"]), angle_to_prefix.get((angle, None), None))
-                        cat_setting = category_settings.get(candidate["label"]["category"], category_settings.get("其他"))
-                        if cat_setting["prefix_mode"] == "single" and cat_setting["prefix"] is None:
-                            prefix = candidate["folder"]
-                        final_results[best_image] = {
-                            "資料夾": candidate["folder"],
-                            "圖片": best_image,
-                            "商品分類": candidate["label"]["category"],
-                            "角度": angle,
-                            "編號": candidate["label"]["number"],
-                            "最大相似度": f"{candidate['similarity']:.2f}%",
-                            "最終前綴": prefix
-                        }
-                        used_angles.add(angle)
-                        assigned_in_this_round.add(best_image)
-
-                unassigned_images -= assigned_in_this_round
-                if not assigned_in_this_round:
-                    break
-
-            for image_file, assignment in final_results.items():
-                if assignment is not None:
-                    results.append(assignment)
-
-            processed_folders += 1
-            progress_bar.progress(processed_folders / total_folders)
-
-        progress_bar.empty()
-        progress_text.empty()
-
-        results = rename_numbers_in_folder(results, category_settings, folder_settings, angle_to_prefix)
-
-        result_df = pd.DataFrame(results)
-        result_df = result_df[result_df['編號'].notna() | (result_df['編號'] == '超過上限')]
-        if "最終前綴" in result_df.columns:
-            result_df = result_df.drop(columns=["最終前綴"])
-
-        st.dataframe(result_df, hide_index=True, use_container_width=True)
-        
-        folder_data = []
-        for folder in image_folders:
-            folder_results = result_df[result_df['資料夾'] == folder]
-            valid_images = folder_results[
-                (folder_results['編號'] != '超過上限') & (~folder_results['編號'].isna())
-            ]
-            num_images = len(valid_images)
-            if selected_brand == "ADS":
-                ad_images = valid_images[valid_images['角度'].str.contains('情境|HM')]
-                num_ad_images = len(ad_images)
-                if num_ad_images > 0:
-                    ad_image_value = f"{num_ad_images + 1:02}"
+                        ad_image_value = "01"
                 else:
-                    ad_image_value = "01"
-            else:
-                ad_image_value = ""
-        
-            folder_data.append({'資料夾': folder, '張數': num_images, '廣告圖': ad_image_value})
-        
-        folder_df = pd.DataFrame(folder_data)
-        image_type_statistics_df = generate_image_type_statistics(result_df)
-        
-        excel_buffer = BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-            result_df.to_excel(writer, sheet_name='編圖結果', index=False)
-            folder_df.to_excel(writer, sheet_name='編圖張數與廣告圖', index=False)
-            image_type_statistics_df.to_excel(writer, sheet_name='圖片類型統計', index=False)
-        excel_data = excel_buffer.getvalue()
+                    ad_image_value = ""
+            
+                folder_data.append({'資料夾': folder, '張數': num_images, '廣告圖': ad_image_value})
+            
+            folder_df = pd.DataFrame(folder_data)
+            image_type_statistics_df = generate_image_type_statistics(result_df)
+            
+            excel_buffer = BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                result_df.to_excel(writer, sheet_name='編圖結果', index=False)
+                folder_df.to_excel(writer, sheet_name='編圖張數與廣告圖', index=False)
+                image_type_statistics_df.to_excel(writer, sheet_name='圖片類型統計', index=False)
+            excel_data = excel_buffer.getvalue()
 
-        zip_data = rename_and_zip_folders(results, excel_data, skipped_images, folder_settings, angle_to_prefix)
-        if uploaded_zip:
-            uploaded_zip_name = os.path.splitext(uploaded_zip.name)[0]  
-            download_file_name = f"{uploaded_zip_name}_結果.zip"
-        else:
-            download_file_name = "結果.zip"
-        
-        shutil.rmtree("uploaded_images")
-        if uploaded_zip:
-            os.remove("temp.zip") 
-        
-        if st.download_button(
-            label="下載編圖結果",
-            data=zip_data,
-            file_name=download_file_name,
-            mime="application/zip",
-            on_click=reset_key_tab1
-        ):
-            st.rerun()
+            zip_data = rename_and_zip_folders(results, excel_data, skipped_images, folder_settings, angle_to_prefix)
+
+            if uploaded_zip:
+                uploaded_zip_name = os.path.splitext(uploaded_zip.name)[0]
+                download_file_name = f"{uploaded_zip_name}_結果.zip"
+            else:
+                download_file_name = "結果.zip"
+            
+            shutil.rmtree("uploaded_images")
+            if uploaded_zip:
+                os.remove("temp.zip")
+            
+            if st.download_button(
+                label="下載編圖結果",
+                data=zip_data,
+                file_name=download_file_name,
+                mime="application/zip",
+                on_click=reset_key_tab1
+            ):
+                st.rerun()
 
 #%% 編圖複檢
 def initialize_tab2():
@@ -1156,65 +1277,27 @@ def initialize_tab2():
         'file_uploader_disabled_2': False,
         'text_area_disabled_2': False,
         'input_path_from_tab1': "",
+        "custom_tmpdir": tempfile.mkdtemp(),
+        'previous_selected_folder': None,
+        'final_zip_content': None
     }
 
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
-        
-def reset_tab2():
-    """
-    重置所有 session_state 變數。
-    """
-    st.session_state['filename_changes'] = {}
-    st.session_state['image_cache'] = {}
-    st.session_state['folder_values'] = {}
-    st.session_state['confirmed_changes'] = {}
-    st.session_state['uploaded_file_name'] = None
-    st.session_state['last_text_inputs'] = {}
-    st.session_state['has_duplicates'] = False
-    st.session_state['duplicate_filenames'] = []
-    st.session_state['modified_folders'] = set()
-    
 
-def cover_path_and_reset_key_tab2():
-    """
-    重置文件上傳器的狀態，並「使用最終 zip 的檔案」覆蓋指定路徑。
-    """
-    # 先刪除 cover_path_input 內所有非 .xlsx / .gsheet 的檔案與資料夾
-    if cover_path_input.strip():
-        for root, dirs, files in os.walk(cover_path_input, topdown=False):
-            for file in files:
-                ext = os.path.splitext(file)[1].lower()
-                if ext not in [".xlsx", ".gsheet"]:
-                    os.remove(os.path.join(root, file))
-            for d in dirs:
-                shutil.rmtree(os.path.join(root, d))
-    
-        # 新作法：從最終 zip 的內容解壓縮到 cover_path_input
-        if "final_zip_content" in st.session_state and st.session_state["final_zip_content"]:
-            final_zip_bytes = st.session_state["final_zip_content"]
-            with zipfile.ZipFile(BytesIO(final_zip_bytes), 'r') as final_zip:
-                for zip_info in final_zip.infolist():
-                    # 跟原本程式一致：不覆蓋 .xlsx 或 .gsheet
-                    ext = os.path.splitext(zip_info.filename)[1].lower()
-                    if ext not in [".xlsx", ".gsheet"]:
-                        final_zip.extract(zip_info, cover_path_input)
-
-    st.session_state['file_uploader_key2'] += 1
-    st.session_state['text_area_key2'] += 1
-    st.session_state['file_uploader_disabled_2'] = False
-    st.session_state['text_area_disabled_2'] = False
-    st.session_state['filename_changes'].clear()
-    
 def get_outer_folder_images(folder_path):
     """
     獲取指定資料夾中所有圖片檔案，並按名稱排序。
-    支援 jpg、jpeg、png、tif、psd。
+    支援 jpg、jpeg、png、tif、psd (故意排除 .ai)。
     """
     return sorted(
-        [f for f in os.listdir(folder_path) if f.lower().endswith(('png', 'jpg', 'jpeg', 'tif', 'tiff', 'psd'))]
+        [
+            f for f in os.listdir(folder_path)
+            # 加入這行即可確保 .ai 不被視為「要顯示或改名」的檔案
+            # 注意：下方 tuple 沒有 .ai，所以會被忽略
+            if f.lower().endswith(('png', 'jpg', 'jpeg', 'tif', 'tiff', 'psd'))
+        ]
     )
-
 def get_prefix(image_files):
     """
     從圖片檔案中取得通用的命名前綴。
@@ -1230,12 +1313,39 @@ def get_prefix(image_files):
             return filename_without_ext[:first_underscore_index + 1]
     return ""
 
-def reset_duplicates_flag():
+def add_image_label(image, file_extension):
     """
-    重設 session state 中的重複檔名標誌。
+    根據檔案副檔名自動為圖片加上標籤（PNG、TIF 或 PSD）。
+    :param image: PIL.Image.Image 物件
+    :param file_extension: 檔案副檔名 (如 '.png', '.tif', '.tiff', '.psd')
+    :return: 加上標籤後的圖片
     """
-    st.session_state['has_duplicates'] = False
- 
+    draw = ImageDraw.Draw(image)
+    label_map = {'.png': 'PNG', '.tif': 'TIF', '.tiff': 'TIF', '.psd': 'PSD'}
+
+    # 判斷標籤文字
+    label_text = label_map.get(file_extension.lower())
+    if not label_text:
+        return image  # 不支援的格式，直接回傳
+
+    # 設定字體大小
+    try:
+        font_size = max(30, int(image.width * 0.12))
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except OSError:
+        font = ImageFont.truetype("NotoSansCJK-Regular.ttc", font_size)
+
+    text_bbox = draw.textbbox((0, 0), label_text, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+
+    x = image.width - text_width - 20
+    y = 20
+
+    # 添加文字背景以增加對比度（可選）
+    draw.text((x, y), label_text, font=font, fill="red")
+    draw.text((x, y), label_text, font=font, fill="red")
+    return image
+
 @functools.lru_cache(maxsize=128)
 def load_and_process_image(image_path, add_label=False):
     """
@@ -1273,7 +1383,7 @@ def handle_file_uploader_change_tab2():
     """
     file_key = 'file_uploader_' + str(st.session_state.get('file_uploader_key2', 0))
     uploaded_file_1 = st.session_state.get(file_key, None)
-    
+
     if uploaded_file_1:
         current_filename = uploaded_file_1.name
         if current_filename != st.session_state['previous_uploaded_file_name']:
@@ -1281,13 +1391,13 @@ def handle_file_uploader_change_tab2():
             if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
                 shutil.rmtree(st.session_state["custom_tmpdir"], ignore_errors=True)
             st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
-            
+
             # 清空 image_cache 和其他狀態
             st.session_state['image_cache'].clear()
             st.session_state['filename_changes'].clear()
             st.session_state['confirmed_changes'].clear()
             st.session_state['folder_values'].clear()
-            
+
             st.session_state['previous_uploaded_file_name'] = current_filename
 
     # 一旦上傳了檔案，就把 text_area_disabled_2 設為 True
@@ -1299,23 +1409,68 @@ def handle_text_area_change_tab2():
     """
     text_key = 'text_area_' + str(st.session_state.get('text_area_key2', 0))
     text_content = st.session_state.get(text_key, "").strip()
-    
+
     if text_content != st.session_state['previous_input_path']:
         # 清空暫存資料夾
         if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
             shutil.rmtree(st.session_state["custom_tmpdir"], ignore_errors=True)
         st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
-        
+
         # 清空 image_cache 和其他狀態
         st.session_state['image_cache'].clear()
         st.session_state['filename_changes'].clear()
         st.session_state['confirmed_changes'].clear()
         st.session_state['folder_values'].clear()
-        
+
         st.session_state['previous_input_path'] = text_content
 
     # 一旦輸入了路徑，就把 file_uploader_disabled_2 設為 True
     st.session_state.file_uploader_disabled_2 = bool(text_content)
+
+def clean_outer_images(zip_buffer):
+    """
+    從 ZIP buffer 中清理 1-Main 或 2-IMG 同層的圖片，並返回清理後的 ZIP buffer。
+    不會清掉任何 .ai 檔。
+    """
+    # 原本的 IMAGE_EXTENSIONS 列表裡沒有 .ai，就代表它不會被清除
+    IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif"]
+    temp_dir = tempfile.mkdtemp()
+    cleaned_zip_buffer = BytesIO()
+
+    try:
+        with zipfile.ZipFile(zip_buffer, "r") as zip_file:
+            zip_file.extractall(temp_dir)
+
+        for root, dirs, files in os.walk(temp_dir):
+            if "1-Main" in dirs or "2-IMG" in dirs:
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # 只清除上述 EXTENSIONS，.ai 不在此列表，自然被保留
+                    if os.path.splitext(file)[1].lower() in IMAGE_EXTENSIONS:
+                        os.remove(file_path)
+
+        with zipfile.ZipFile(cleaned_zip_buffer, "w", zipfile.ZIP_DEFLATED) as new_zip:
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    relative_path = os.path.relpath(file_path, temp_dir)
+                    new_zip.write(file_path, arcname=relative_path)
+    finally:
+        shutil.rmtree(temp_dir)
+
+    cleaned_zip_buffer.seek(0)
+    return cleaned_zip_buffer
+
+@functools.lru_cache(maxsize=512)
+def get_sort_key(image_file):
+    """
+    取得排序用 key，若該檔案在 filename_changes 中有新檔名則使用新檔名做排序，否則使用原檔名。
+    """
+    filename_changes = st.session_state.get('filename_changes', {}).get(selected_folder, {})
+    if image_file in filename_changes:
+        new_filename = filename_changes[image_file]['new_filename']
+        return new_filename if new_filename else image_file
+    return image_file
 
 def handle_submission(selected_folder, images_to_display, outer_images_to_display, use_full_filename, folder_to_data):
     """
@@ -1323,16 +1478,16 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
     """
     current_filenames = {}
     temp_filename_changes = {}
-    modified_outer_count = 0  # 記錄修改的 outer images 數量
-    removed_image_count = 0  # 記錄 images_to_display 被移除的數量
+    modified_outer_count = 0
+    removed_image_count = 0
 
+    # 取得 prefix
     if not use_full_filename:
         prefix = get_prefix(images_to_display)
-        if prefix == "":
-            prefix = get_prefix(images_to_display)
     else:
         prefix = ""
 
+    # 依照使用者輸入來更新 new_filename
     for image_file in images_to_display:
         text_input_key = f"{selected_folder}_{image_file}"
         new_text = st.session_state.get(text_input_key, "")
@@ -1342,27 +1497,26 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
 
         if not use_full_filename:
             first_underscore_index = filename_without_ext.find('_')
-            if first_underscore_index != -1:
-                default_text = filename_without_ext[first_underscore_index + 1:]
-            else:
-                default_text = filename_without_ext
+            default_text = (
+                filename_without_ext[first_underscore_index + 1:]
+                if first_underscore_index != -1 else filename_without_ext
+            )
         else:
             default_text = filename_without_ext
 
         if new_text.strip() == '':
             new_filename = ''
+            removed_image_count += 1
         else:
-            if not use_full_filename:
-                new_filename = prefix + new_text + extension
-            else:
-                new_filename = new_text + extension
+            new_filename = (
+                prefix + new_text + extension
+                if not use_full_filename else new_text + extension
+            )
 
         current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
         temp_filename_changes[image_file] = {'new_filename': new_filename, 'text': new_text}
 
-        if new_filename == '':
-            removed_image_count += 1
-
+    # 外層圖片之處理
     for outer_image_file in outer_images_to_display:
         text_input_key = f"outer_{selected_folder}_{outer_image_file}"
         new_text = st.session_state.get(text_input_key, "")
@@ -1372,32 +1526,41 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
 
         if not use_full_filename:
             first_underscore_index = filename_without_ext.find('_')
-            if first_underscore_index != -1:
-                default_text = filename_without_ext[first_underscore_index + 1:]
-            else:
-                default_text = filename_without_ext
+            default_text = (
+                filename_without_ext[first_underscore_index + 1:]
+                if first_underscore_index != -1 else filename_without_ext
+            )
 
-            if new_text.strip() == '':
-                new_filename = ''
-            else:
-                new_filename = prefix + new_text + extension
+            new_filename = (
+                prefix + new_text + extension
+                if new_text.strip() != '' else ''
+            )
         else:
             default_text = filename_without_ext
-            if new_text.strip() == '':
-                new_filename = ''
-            else:
-                new_filename = new_text + extension
+            new_filename = (
+                new_text + extension if new_text.strip() != '' else ''
+            )
 
+        # 只有使用者真的有改動外層檔名時才將其加入 temp_filename_changes
         if new_text.strip() != default_text:
-            current_filenames[outer_image_file] = {'new_filename': new_filename, 'text': new_text}
-            temp_filename_changes[outer_image_file] = {'new_filename': new_filename, 'text': new_text}
-
+            temp_filename_changes[outer_image_file] = {
+                'new_filename': new_filename,
+                'text': new_text
+            }
             if new_filename != '':
                 modified_outer_count += 1
 
-    new_filenames = [data['new_filename'] for data in temp_filename_changes.values() if data['new_filename'] != '']
-    duplicates = [filename for filename, count in Counter(new_filenames).items() if count > 1]
+    # 檢查新檔名重複
+    new_filenames = [
+        data['new_filename']
+        for data in temp_filename_changes.values()
+        if data['new_filename'] != ''
+    ]
+    duplicates = [
+        filename for filename, count in Counter(new_filenames).items() if count > 1
+    ]
 
+    # 若有重複，則設定 has_duplicates
     if duplicates:
         st.session_state['has_duplicates'] = True
         st.session_state['duplicate_filenames'] = duplicates
@@ -1406,10 +1569,13 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
         st.session_state['has_duplicates'] = False
         st.session_state['confirmed_changes'][selected_folder] = True
 
+        # 不使用完整檔名時，需依序重新命名檔名後面的序號
         if not use_full_filename:
-            sorted_files = sorted(temp_filename_changes.items(), key=lambda x: x[1]['new_filename'])
+            sorted_files = sorted(
+                temp_filename_changes.items(),
+                key=lambda x: x[1]['new_filename']
+            )
             rename_counter = 1
-
             for file, data in sorted_files:
                 if data['new_filename'] != '':
                     new_index = str(rename_counter).zfill(2)
@@ -1418,167 +1584,121 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
 
                     temp_filename_changes[file]['new_filename'] = new_filename
                     temp_filename_changes[file]['text'] = new_index
-
                     rename_counter += 1
 
+        # 更新 session_state
         if selected_folder not in st.session_state['filename_changes']:
             st.session_state['filename_changes'][selected_folder] = {}
         st.session_state['filename_changes'][selected_folder].update(temp_filename_changes)
 
+        # 使表單中的 TextInput 與更新後的內容保持同步
         for file, data in temp_filename_changes.items():
             text_input_key = f"{selected_folder}_{file}"
             st.session_state[text_input_key] = data['text']
 
+    # 更新圖片統計數量
     if num_images_key in st.session_state:
         current_num_images = int(st.session_state[num_images_key])
-        st.session_state[num_images_key] = str(max(1, current_num_images - removed_image_count + modified_outer_count))
+        st.session_state[num_images_key] = str(
+            max(1, current_num_images - removed_image_count + modified_outer_count)
+        )
 
+    # 取回目前選擇資料夾的統計 key
     ad_images_key = f"{selected_folder}_ad_images"
     ad_images_value = st.session_state.get(ad_images_key)
+    model_images_key = f"{selected_folder}_model_images"
+    flat_images_key = f"{selected_folder}_flat_images"
+
+    model_images_value = st.session_state.get(model_images_key)
+    flat_images_value = st.session_state.get(flat_images_key)
     data = folder_to_data.get(selected_folder, {})
     data_folder_name = data.get('資料夾', selected_folder)
 
-    model_images_key = f"{selected_folder}_model_images"
-    flat_images_key = f"{selected_folder}_flat_images"
-    model_images_value = st.session_state.get(model_images_key)
-    flat_images_value = st.session_state.get(flat_images_key)
-
+    # 將結果紀錄於 st.session_state['folder_values'] 內
     st.session_state['folder_values'][data_folder_name] = {
         '張數': st.session_state[num_images_key],
         '廣告圖': ad_images_value,
         '模特': model_images_value,
         '平拍': flat_images_value,
     }
-
     st.session_state['modified_folders'].add(data_folder_name)
 
-@functools.lru_cache(maxsize=512)
-def get_sort_key(image_file):
-    filename_changes = st.session_state.get('filename_changes', {}).get(selected_folder, {})
-    if image_file in filename_changes:
-        new_filename = filename_changes[image_file]['new_filename']
-        return new_filename if new_filename else image_file
-    return image_file
-
-def add_image_label(image, file_extension):
+def cover_path_and_reset_key_tab2():
     """
-    根據檔案副檔名自動為圖片加上標籤（PNG、TIF 或 PSD）。
-    :param image: PIL.Image.Image 物件
-    :param file_extension: 檔案副檔名 (如 '.png', '.tif', '.tiff', '.psd')
-    :return: 加上標籤後的圖片
+    重置文件上傳器的狀態，並「使用最終 zip 的檔案」覆蓋指定路徑。
     """
-    draw = ImageDraw.Draw(image)
-    try:
-        font_size = max(30, int(image.width * 0.12))
-        font = ImageFont.truetype("arial.ttf", font_size)
-    except OSError:
-        font = ImageFont.truetype("NotoSansCJK-Regular.ttc", font_size)
+    # 先刪除 cover_path_input 內所有非 .xlsx / .gsheet 的檔案與資料夾
+    # 但若是 "編圖結果.xlsx" 則直接刪除，後續會用最新檔覆蓋
+    if cover_path_input.strip():
+        for root, dirs, files in os.walk(cover_path_input, topdown=False):
+            for file in files:
+                ext = os.path.splitext(file)[1].lower()
+                if file.lower() == '編圖結果.xlsx':
+                    os.remove(os.path.join(root, file))
+                elif ext not in [".xlsx", ".gsheet"]:
+                    os.remove(os.path.join(root, file))
+            for d in dirs:
+                shutil.rmtree(os.path.join(root, d))
 
-    # 判斷標籤文字
-    label_map = {'.png': 'PNG', '.tif': 'TIF', '.tiff': 'TIF', '.psd': 'PSD'}
-    label_text = label_map.get(file_extension.lower())
+        # 從最終 zip 的內容解壓縮到 cover_path_input
+        if "final_zip_content" in st.session_state and st.session_state["final_zip_content"]:
+            final_zip_bytes = st.session_state["final_zip_content"]
+            with zipfile.ZipFile(BytesIO(final_zip_bytes), 'r') as final_zip:
+                for zip_info in final_zip.infolist():
+                    ext = os.path.splitext(zip_info.filename)[1].lower()
+                    if zip_info.filename.lower().endswith("編圖結果.xlsx"):
+                        final_zip.extract(zip_info, cover_path_input)
+                    elif ext not in [".xlsx", ".gsheet"]:
+                        final_zip.extract(zip_info, cover_path_input)
 
-    if label_text:  # 如果是支援的格式，添加標籤
-        text_bbox = draw.textbbox((0, 0), label_text, font=font)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_height = text_bbox[3] - text_bbox[1]
-
-        x = image.width - text_width - 20
-        y = 20
-
-        # 添加文字背景以增加對比度（可選）
-        draw.rectangle(
-            [x - 10, y - 10, x + text_width + 10, y + text_height + 10],
-            fill="white",
-            outline=None,
-        )
-        draw.text((x, y), label_text, font=font, fill="red")
-
-    return image
-
-def clean_outer_images(zip_buffer):
-    """
-    從 ZIP buffer 中清理 1-Main 或 2-IMG 同層的圖片，並返回清理後的 ZIP buffer。
-
-    :param zip_buffer: 包含壓縮檔內容的 BytesIO 對象
-    :return: 清理後的 ZIP buffer
-    """
-    import os
-    import shutil
-    import tempfile
-    import zipfile
-    from io import BytesIO
-
-    # 支援的圖片副檔名
-    IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif"]
-
-    # 創建臨時目錄以解壓 ZIP 檔案
-    temp_dir = tempfile.mkdtemp()
-    cleaned_zip_buffer = BytesIO()
-
-    try:
-        # 解壓縮到臨時資料夾
-        with zipfile.ZipFile(zip_buffer, "r") as zip_file:
-            zip_file.extractall(temp_dir)
-
-        # 遍歷目錄，刪除與 1-Main 或 2-IMG 同層的圖片檔案
-        for root, dirs, files in os.walk(temp_dir):
-            if "1-Main" in dirs or "2-IMG" in dirs:
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    if os.path.splitext(file)[1].lower() in IMAGE_EXTENSIONS:
-                        os.remove(file_path)  # 刪除圖片檔案
-
-        # 將清理過的內容重新打包成 ZIP
-        with zipfile.ZipFile(cleaned_zip_buffer, "w", zipfile.ZIP_DEFLATED) as new_zip:
-            for root, dirs, files in os.walk(temp_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    relative_path = os.path.relpath(file_path, temp_dir)
-                    new_zip.write(file_path, arcname=relative_path)
-    finally:
-        # 清理臨時資料夾
-        shutil.rmtree(temp_dir)
-
-    cleaned_zip_buffer.seek(0)  # 將指標移回開頭
-    return cleaned_zip_buffer
+    st.session_state['file_uploader_key2'] += 1
+    st.session_state['text_area_key2'] += 1
+    st.session_state['file_uploader_disabled_2'] = False
+    st.session_state['text_area_disabled_2'] = False
+    st.session_state['filename_changes'].clear()
 
 with tab2:
     initialize_tab2()
     st.write("\n")
     col1, col2 = st.columns([1.6, 1])
+
     uploaded_file_2 = col1.file_uploader(
         "上傳編圖結果 ZIP 檔",
         type=["zip"],
         key='file_uploader_' + str(st.session_state['file_uploader_key2']),
-        disabled=st.session_state['file_uploader_disabled_2'],  # <- 關鍵：根據輸入路徑是否填寫來 disable
+        disabled=st.session_state['file_uploader_disabled_2'],
         on_change=handle_file_uploader_change_tab2
     )
-    
     input_path_2 = col2.text_area(
         "或 輸入資料夾路徑",
         height=78,
         key='text_area_' + str(st.session_state['text_area_key2']),
-        disabled=st.session_state['text_area_disabled_2'],  # <- 關鍵：根據是否上傳檔案來 disable
+        disabled=st.session_state['text_area_disabled_2'],
         on_change=handle_text_area_change_tab2
     )
 
     if uploaded_file_2 or input_path_2:
-        if "custom_tmpdir" not in st.session_state:
-            st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
         tmpdirname = st.session_state["custom_tmpdir"]
+
+        # 檔案來源處理：ZIP 上傳 或 輸入路徑
         if uploaded_file_2:
-            # 如果使用上傳檔案
             with zipfile.ZipFile(uploaded_file_2) as zip_ref:
                 zip_ref.extractall(tmpdirname)
         elif input_path_2:
-            # 如果使用本地路徑
+            if input_path_2.startswith("search-ms:"):
+                match = re.search(r'location:([^&]+)', input_path_2)
+                if match:
+                    input_path_2 = re.sub(r'%3A', ':', match.group(1))
+                    input_path_2 = re.sub(r'%5C', '\\\\', input_path_2)
+                else:
+                    st.warning("無法解析 search-ms 路徑，請確認輸入格式。")
             if not os.path.exists(input_path_2):
                 st.error("指定的本地路徑不存在，請重新輸入。")
                 st.stop()
             else:
                 shutil.copytree(input_path_2, tmpdirname, dirs_exist_ok=True)
 
+        # 預先讀取編圖結果.xlsx
         excel_file_path = os.path.join(tmpdirname, '編圖結果.xlsx')
         if os.path.exists(excel_file_path):
             excel_sheets = pd.read_excel(excel_file_path, sheet_name=None)
@@ -1608,10 +1728,12 @@ with tab2:
             type_sheet_df = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
             type_folder_to_row_idx = {}
 
+        # 將頂層資料夾對應到 excel 內的統計資料
         folder_to_data = {}
         top_level_folders = [
             name for name in os.listdir(tmpdirname)
-            if os.path.isdir(os.path.join(tmpdirname, name)) and not name.startswith(('_', '.'))
+            if os.path.isdir(os.path.join(tmpdirname, name))
+            and not name.startswith(('_', '.'))
         ]
 
         for folder_name in top_level_folders:
@@ -1640,6 +1762,7 @@ with tab2:
                         }
                     matched = True
                     break
+
             if not matched:
                 folder_to_data[folder_name] = {
                     '資料夾': folder_name,
@@ -1649,6 +1772,7 @@ with tab2:
                     '平拍': '0',
                 }
 
+        # session_state 初始
         for folder_name, data in folder_to_data.items():
             data_folder_name = data.get('資料夾', folder_name)
             if data_folder_name not in st.session_state['folder_values']:
@@ -1665,7 +1789,6 @@ with tab2:
         if top_level_folders:
             if 'previous_selected_folder' not in st.session_state:
                 st.session_state['previous_selected_folder'] = None
-
             if 'last_text_inputs' not in st.session_state:
                 st.session_state['last_text_inputs'] = {}
 
@@ -1675,9 +1798,10 @@ with tab2:
                 top_level_folders,
                 default=top_level_folders[0],
                 label_visibility="collapsed",
-                on_change=reset_duplicates_flag
+                on_change=lambda: st.session_state.update({'has_duplicates': False})
             )
 
+            # 儲存/取回上一個選擇資料夾的 text_input 狀態
             if selected_folder is None and previous_folder is not None:
                 st.session_state['last_text_inputs'][previous_folder] = {
                     key: st.session_state[key]
@@ -1690,14 +1814,15 @@ with tab2:
                         st.session_state[key] = value
 
             st.session_state['previous_selected_folder'] = selected_folder
-
             st.write("\n")
 
             if selected_folder is None:
                 st.stop()
 
+            # 圖片所在路徑 (優先 2-IMG)
             img_folder_path = os.path.join(tmpdirname, selected_folder, '2-IMG')
             use_full_filename = False
+
             if not os.path.exists(img_folder_path):
                 img_folder_path = os.path.join(tmpdirname, selected_folder, '1-Main', 'All')
                 use_full_filename = False
@@ -1719,12 +1844,13 @@ with tab2:
                         st.session_state['image_cache'][selected_folder] = {}
 
                     all_images = set(image_files + outer_images)
-
                     images_to_display = []
                     outer_images_to_display = []
 
+                    # 分類已被使用者「刪名」的圖片 以及 仍在顯示範圍內的圖片
                     for image_file in all_images:
-                        if selected_folder in st.session_state['filename_changes'] and image_file in st.session_state['filename_changes'][selected_folder]:
+                        if (selected_folder in st.session_state['filename_changes']
+                                and image_file in st.session_state['filename_changes'][selected_folder]):
                             data = st.session_state['filename_changes'][selected_folder][image_file]
                             if data['new_filename'] == '':
                                 outer_images_to_display.append(image_file)
@@ -1745,59 +1871,66 @@ with tab2:
                         basename_to_extensions[basename].append(ext.lower())
 
                     with st.form(f"filename_form_{selected_folder}"):
-                        colAA,colBB,colCC = st.columns([16.3,0.01,2])
+                        colAA, colBB, colCC = st.columns([16.3, 0.01, 2])
                         with colAA:
                             cols = st.columns(6)
                             for idx, image_file in enumerate(images_to_display):
                                 if idx % 6 == 0 and idx != 0:
                                     cols = st.columns(6)
                                 col = cols[idx % 6]
-    
-                                image_path = os.path.join(img_folder_path, image_file) if image_file in image_files else os.path.join(outer_folder_path, image_file)
+
+                                # 圖片顯示
+                                image_path = (
+                                    os.path.join(img_folder_path, image_file)
+                                    if image_file in image_files
+                                    else os.path.join(outer_folder_path, image_file)
+                                )
                                 if image_path not in st.session_state['image_cache'][selected_folder]:
                                     add_label = (
-                                        image_file.lower().endswith('.png') or 
-                                        image_file.lower().endswith('.tif') or 
-                                        image_file.lower().endswith('.tiff') or 
-                                        image_file.lower().endswith('.psd')
+                                        image_file.lower().endswith('.png')
+                                        or image_file.lower().endswith('.tif')
+                                        or image_file.lower().endswith('.tiff')
+                                        or image_file.lower().endswith('.psd')
                                     )
                                     image = load_and_process_image(image_path, add_label)
                                     st.session_state['image_cache'][selected_folder][image_path] = image
                                 else:
                                     image = st.session_state['image_cache'][selected_folder][image_path]
-    
+
                                 col.image(image, use_container_width=True)
-    
+
+                                # 預設檔名(不使用完整檔名需排除 prefix)
                                 filename_without_ext = os.path.splitext(image_file)[0]
                                 extension = os.path.splitext(image_file)[1]
-    
+
                                 if use_full_filename:
                                     default_text = filename_without_ext
                                 else:
                                     first_underscore_index = filename_without_ext.find('_')
-                                    if first_underscore_index != -1:
-                                        default_text = filename_without_ext[first_underscore_index + 1:]
-                                    else:
-                                        default_text = filename_without_ext
-    
-                                if (selected_folder in st.session_state['filename_changes'] and
-                                    image_file in st.session_state['filename_changes'][selected_folder]):
+                                    default_text = (
+                                        filename_without_ext[first_underscore_index + 1:]
+                                        if first_underscore_index != -1 else filename_without_ext
+                                    )
+
+                                if (selected_folder in st.session_state['filename_changes']
+                                        and image_file in st.session_state['filename_changes'][selected_folder]):
                                     modified_text = st.session_state['filename_changes'][selected_folder][image_file]['text']
                                 else:
                                     modified_text = default_text
-    
+
                                 text_input_key = f"{selected_folder}_{image_file}"
                                 if text_input_key not in st.session_state:
                                     st.session_state[text_input_key] = modified_text
-    
+
                                 col.text_input('檔名', key=text_input_key, label_visibility="collapsed")
-    
-                            
-    
+
+                            # 選擇張數、廣告圖、模特數、平拍數
                             if folder_to_data:
                                 data = folder_to_data.get(selected_folder, {})
                                 data_folder_name = data.get('資料夾', selected_folder)
-                                if data_folder_name and 'folder_values' in st.session_state and data_folder_name in st.session_state['folder_values']:
+                                if (data_folder_name
+                                        and 'folder_values' in st.session_state
+                                        and data_folder_name in st.session_state['folder_values']):
                                     num_images_default = st.session_state['folder_values'][data_folder_name]['張數']
                                     ad_images_default = st.session_state['folder_values'][data_folder_name]['廣告圖']
                                     model_images_default = st.session_state['folder_values'][data_folder_name]['模特']
@@ -1807,30 +1940,31 @@ with tab2:
                                     ad_images_default = data.get('廣告圖', '1')
                                     model_images_default = data.get('模特', '0')
                                     flat_images_default = data.get('平拍', '0')
-                            
+
                                 num_images_key = f"{selected_folder}_num_images"
                                 ad_images_key = f"{selected_folder}_ad_images"
                                 model_images_key = f"{selected_folder}_model_images"
                                 flat_images_key = f"{selected_folder}_flat_images"
-                            
+
                                 if num_images_key not in st.session_state:
                                     st.session_state[num_images_key] = num_images_default
-                            
                                 if ad_images_key not in st.session_state:
                                     st.session_state[ad_images_key] = ad_images_default
-                            
                                 if model_images_key not in st.session_state:
                                     st.session_state[model_images_key] = model_images_default
-                            
                                 if flat_images_key not in st.session_state:
                                     st.session_state[flat_images_key] = flat_images_default
-                            
-                                upper_limit = max(10, int(num_images_default), int(ad_images_default))
-                            
+
+                                upper_limit = max(
+                                    10,
+                                    int(num_images_default),
+                                    int(ad_images_default)
+                                )
+
                                 num_images_options = [str(i) for i in range(1, upper_limit + 1)]
                                 ad_images_options = [str(i) for i in range(1, upper_limit + 1)]
                                 type_images_options = [str(i) for i in range(0, 11)]
-                                
+
                                 with colCC:
                                     st.selectbox('張數', num_images_options, key=num_images_key)
                                     st.selectbox('廣告圖', ad_images_options, key=ad_images_key)
@@ -1840,27 +1974,41 @@ with tab2:
                                 num_images_key = None
                                 ad_images_key = None
                                 folder_to_data = None
-                            
-                        st.divider()   
-                        col1, col2, col3 ,col4= st.columns([3,7,2,2.5], vertical_alignment="center")
-                        if col1.form_submit_button(
+
+                        st.divider()
+                        colA, colB, colC, colD = st.columns([3, 7, 2, 2.5], vertical_alignment="center")
+
+                        # 暫存修改
+                        if colA.form_submit_button(
                             "暫存修改",
                             on_click=handle_submission,
-                            args=(selected_folder, images_to_display, outer_images_to_display, use_full_filename, folder_to_data )
+                            args=(selected_folder, images_to_display, outer_images_to_display, use_full_filename, folder_to_data)
                         ):
-                            st.toast(f"資料夾 {selected_folder} 暫存修改成功!",icon='🎉')
+                            if st.session_state.get('has_duplicates') is False:
+                                st.toast(f"資料夾 {selected_folder} 暫存修改成功!", icon='🎉')
+
+                        # 外層圖片 popover
                         if outer_images_to_display:
-                            with col4.popover("外層圖片"):
+                            with colD.popover("外層圖片"):
                                 outer_cols = st.columns(6)
                                 for idx, outer_image_file in enumerate(outer_images_to_display):
                                     if idx % 6 == 0 and idx != 0:
                                         outer_cols = st.columns(6)
                                     col = outer_cols[idx % 6]
 
-                                    outer_image_path = os.path.join(outer_folder_path, outer_image_file) if outer_image_file in outer_images else os.path.join(img_folder_path, outer_image_file)
+                                    outer_image_path = (
+                                        os.path.join(outer_folder_path, outer_image_file)
+                                        if outer_image_file in outer_images
+                                        else os.path.join(img_folder_path, outer_image_file)
+                                    )
 
-                                    if outer_image_path not in st.session_state['image_cache'][selected_folder]:
-                                        add_label = outer_image_file.lower().endswith('.png') or outer_image_file.lower().endswith('.tif') or outer_image_file.lower().endswith('.tiff')
+                                    if (outer_image_path
+                                            not in st.session_state['image_cache'][selected_folder]):
+                                        add_label = (
+                                            outer_image_file.lower().endswith('.png')
+                                            or outer_image_file.lower().endswith('.tif')
+                                            or outer_image_file.lower().endswith('.tiff')
+                                        )
                                         outer_image = load_and_process_image(outer_image_path, add_label)
                                         st.session_state['image_cache'][selected_folder][outer_image_path] = outer_image
                                     else:
@@ -1875,40 +2023,50 @@ with tab2:
                                         default_text = filename_without_ext
                                     else:
                                         first_underscore_index = filename_without_ext.find('_')
-                                        if first_underscore_index != -1:
-                                            default_text = filename_without_ext[first_underscore_index + 1:]
-                                        else:
-                                            default_text = filename_without_ext
+                                        default_text = (
+                                            filename_without_ext[first_underscore_index + 1:]
+                                            if first_underscore_index != -1 else filename_without_ext
+                                        )
 
-                                    if (selected_folder in st.session_state['filename_changes'] and
-                                        outer_image_file in st.session_state['filename_changes'][selected_folder]):
+                                    if (selected_folder in st.session_state['filename_changes']
+                                            and outer_image_file in st.session_state['filename_changes'][selected_folder]):
                                         modified_text = st.session_state['filename_changes'][selected_folder][outer_image_file]['text']
                                         if modified_text == '':
-                                            modified_text = st.session_state['filename_changes'][selected_folder][outer_image_file].get('last_non_empty', default_text)
+                                            modified_text = st.session_state['filename_changes'][selected_folder][outer_image_file].get(
+                                                'last_non_empty',
+                                                default_text
+                                            )
                                     else:
                                         modified_text = default_text
 
                                     text_input_key = f"outer_{selected_folder}_{outer_image_file}"
                                     col.text_input('檔名', value=modified_text, key=text_input_key)
-                                    
-                        if st.session_state.get('has_duplicates') == True:
-                            col2.warning(f"檔名重複: {', '.join(st.session_state['duplicate_filenames'])}")
 
+                        # 若有檔名重複
+                        if st.session_state.get('has_duplicates'):
+                            colB.warning(f"檔名重複: {', '.join(st.session_state['duplicate_filenames'])}")
+
+                    # 所有資料夾均確認完成
                     if st.checkbox("所有資料夾均確認完成"):
                         with st.spinner('修改檔名中...'):
                             zip_buffer = BytesIO()
                             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                                top_level_files = [name for name in os.listdir(tmpdirname) if os.path.isfile(os.path.join(tmpdirname, name))]
-
+                                # 先壓縮頂層檔案
+                                top_level_files = [
+                                    name for name in os.listdir(tmpdirname)
+                                    if os.path.isfile(os.path.join(tmpdirname, name))
+                                ]
                                 for file_name in top_level_files:
                                     file_path = os.path.join(tmpdirname, file_name)
                                     arcname = file_name
                                     try:
+                                        # 避免編圖結果.xlsx 重複打包
                                         if file_name != '編圖結果.xlsx':
                                             zipf.write(file_path, arcname=arcname)
                                     except Exception as e:
                                         st.error(f"壓縮檔案時發生錯誤：{file_name} - {str(e)}")
 
+                                # 再壓縮所有資料夾，並將經過使用者修改後的新檔名寫入壓縮包
                                 for folder_name in top_level_folders:
                                     folder_path = os.path.join(tmpdirname, folder_name)
                                     for root, dirs, files in os.walk(folder_path):
@@ -1920,7 +2078,8 @@ with tab2:
                                             path_parts = rel_path.split(os.sep)
 
                                             original_file = file
-                                            if folder_name in st.session_state['filename_changes'] and original_file in st.session_state['filename_changes'][folder_name]:
+                                            if (folder_name in st.session_state['filename_changes']
+                                                    and original_file in st.session_state['filename_changes'][folder_name]):
                                                 data = st.session_state['filename_changes'][folder_name][original_file]
                                                 new_filename = data['new_filename']
                                                 if new_filename.strip() == '':
@@ -1945,10 +2104,13 @@ with tab2:
                                                 except Exception as e:
                                                     st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
 
+                                # 處理編圖結果.xlsx 之更新
                                 excel_buffer = BytesIO()
-
                                 if excel_sheets:
-                                    result_df = excel_sheets.get('編圖張數與廣告圖', pd.DataFrame(columns=['資料夾', '張數', '廣告圖']))
+                                    result_df = excel_sheets.get(
+                                        '編圖張數與廣告圖',
+                                        pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
+                                    )
                                     for idx, row in result_df.iterrows():
                                         data_folder_name = str(row['資料夾'])
                                         if data_folder_name in st.session_state['folder_values']:
@@ -1975,7 +2137,10 @@ with tab2:
 
                                     excel_sheets['編圖張數與廣告圖'] = result_df
 
-                                    type_result_df = excel_sheets.get('圖片類型統計', pd.DataFrame(columns=['資料夾', '模特', '平拍']))
+                                    type_result_df = excel_sheets.get(
+                                        '圖片類型統計',
+                                        pd.DataFrame(columns=['資料夾', '模特', '平拍'])
+                                    )
                                     for idx, row in type_result_df.iterrows():
                                         data_folder_name = str(row['資料夾'])
                                         if data_folder_name in st.session_state['folder_values']:
@@ -2006,6 +2171,7 @@ with tab2:
                                 else:
                                     result_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
                                     type_result_df = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
+
                                     for data_folder_name in st.session_state['folder_values']:
                                         num_images = st.session_state['folder_values'][data_folder_name]['張數']
                                         ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
@@ -2025,6 +2191,7 @@ with tab2:
                                             '平拍': flat_images,
                                         }])
                                         type_result_df = pd.concat([type_result_df, new_type_row], ignore_index=True)
+
                                     with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
                                         result_df.to_excel(writer, index=False, sheet_name='編圖張數與廣告圖')
                                         type_result_df.to_excel(writer, index=False, sheet_name='圖片類型統計')
@@ -2034,24 +2201,33 @@ with tab2:
 
                             zip_buffer.seek(0)
                             st.session_state["final_zip_content"] = zip_buffer.getvalue()
+
                             cleaned_zip_buffer = clean_outer_images(zip_buffer)
-                            download_file_name = uploaded_file_2.name if uploaded_file_2 else "結果.zip"
-                            
-                            col1, col2 = st.columns([2.7, 1])
+
+                            # 命名下載檔案
+                            if uploaded_file_2:
+                                download_file_name = uploaded_file_2.name.replace(".zip", "_已複檢.zip")
+                            elif input_path_2:
+                                folder_name = os.path.basename(input_path_2.strip(os.sep))
+                                download_file_name = f"{folder_name}__已複檢.zip"
+                            else:
+                                download_file_name = "結果_已複檢.zip"
+
+                            col1_, col2_ = st.columns([2.7, 1])
+
                             if st.session_state["input_path_from_tab1"]:
                                 cover_text_default = st.session_state.get("input_path_from_tab1")
                             elif not uploaded_file_2 and input_path_2:
-                                cover_text_default = input_path_2.strip() 
+                                cover_text_default = input_path_2.strip()
                             else:
                                 cover_text_default = ""
-                                
-                            cover_path_input = col1.text_input(
+
+                            cover_path_input = col1_.text_input(
                                 label="同步覆蓋此路徑的檔案",
                                 value=cover_text_default,
                                 placeholder="   輸入分包資料夾路徑以直接覆蓋原檔案 (選填)",
                             )
-                                
-                            col2.download_button(
+                            col2_.download_button(
                                 label='下載修改後的檔案',
                                 data=cleaned_zip_buffer,
                                 file_name=download_file_name,
