@@ -466,7 +466,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
         os.makedirs(main_folder_path, exist_ok=True)
 
         old_image_path = os.path.join(folder_path, image_file)
-        file_extension = os.path.splitext(image_file)[1]
+        file_extension = os.path.splitext(image_file)[1]  # 確保副檔名保持一致
 
         if (use_two_img_folder and (new_number == "超過上限" or pd.isna(new_number))):
             new_image_path = old_image_path
