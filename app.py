@@ -1458,7 +1458,6 @@ def clean_outer_images(zip_buffer):
     cleaned_zip_buffer.seek(0)
     return cleaned_zip_buffer
 
-@functools.lru_cache(maxsize=512)
 def get_sort_key(image_file):
     """
     取得排序用 key，若該檔案在 filename_changes 中有新檔名則使用新檔名做排序，否則使用原檔名。
