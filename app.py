@@ -17,6 +17,8 @@ import chardet
 import faiss  
 import functools
 import imagecodecs
+import ctypes
+import subprocess
 from psd_tools import PSDImage
 
 st.set_page_config(page_title='TP自動編圖工具', page_icon='👕', layout="wide")
@@ -34,12 +36,6 @@ section.stMain {
     section.stMain {
         padding-left: 19%;
         padding-right: 19%;
-    }
-}
-@media (min-width: 1000px) {
-    section.stMain {
-        padding-left: 10%;
-        padding-right: 10%;
     }
 }
 div.stTextInput > label {
@@ -472,7 +468,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
         os.makedirs(main_folder_path, exist_ok=True)
 
         old_image_path = os.path.join(folder_path, image_file)
-        file_extension = os.path.splitext(image_file)[1]  # 確保副檔名保持一致
+        file_extension = os.path.splitext(image_file)[1]
 
         if (use_two_img_folder and (new_number == "超過上限" or pd.isna(new_number))):
             new_image_path = old_image_path
@@ -938,7 +934,6 @@ with tab1:
                     item["labels"]["angle"]: item["labels"]["number"] 
                     for item in filtered_by_category
                 }
-
                 used_angles = set()
                 final_results = {}
                 rule_flags = [False for _ in angle_banning_rules]
@@ -1218,16 +1213,13 @@ with tab1:
                     (folder_results['編號'] != '超過上限') & (~folder_results['編號'].isna())
                 ]
                 num_images = len(valid_images)
-                if selected_brand == "ADS":
-                    ad_images = valid_images[valid_images['角度'].str.contains('情境|HM')]
-                    num_ad_images = len(ad_images)
-                    if num_ad_images > 0:
-                        ad_image_value = f"{num_ad_images + 1:02}"
-                    else:
-                        ad_image_value = "01"
+                ad_images = valid_images[valid_images['角度'].str.contains('情境')]
+                num_ad_images = len(ad_images)
+                if num_ad_images > 0:
+                    ad_image_value = f"{num_ad_images + 1:02}"
                 else:
-                    ad_image_value = ""
-            
+                    ad_image_value = "01"
+
                 folder_data.append({'資料夾': folder, '張數': num_images, '廣告圖': ad_image_value})
             
             folder_df = pd.DataFrame(folder_data)
@@ -1436,10 +1428,9 @@ def handle_text_area_change_tab2():
 def clean_outer_images(zip_buffer):
     """
     從 ZIP buffer 中清理 1-Main 或 2-IMG 同層的圖片，並返回清理後的 ZIP buffer。
-    不會清掉任何 .ai 檔。
     """
     # 原本的 IMAGE_EXTENSIONS 列表裡沒有 .ai，就代表它不會被清除
-    IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif"]
+    IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif",".psd",".ai"]
     temp_dir = tempfile.mkdtemp()
     cleaned_zip_buffer = BytesIO()
 
@@ -1632,19 +1623,51 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
 def cover_path_and_reset_key_tab2():
     """
     重置文件上傳器的狀態，並「使用最終 zip 的檔案」覆蓋指定路徑。
+    同時處理可能無法刪除的 .db 檔案，透過終止相關進程並強制刪除。
     """
-    # 先刪除 cover_path_input 內所有非 .xlsx / .gsheet 的檔案與資料夾
-    # 但若是 "編圖結果.xlsx" 則直接刪除，後續會用最新檔覆蓋
     if cover_path_input.strip():
         for root, dirs, files in os.walk(cover_path_input, topdown=False):
             for file in files:
                 ext = os.path.splitext(file)[1].lower()
-                if file.lower() == '編圖結果.xlsx':
-                    os.remove(os.path.join(root, file))
-                elif ext not in [".xlsx", ".gsheet"]:
-                    os.remove(os.path.join(root, file))
+                file_path = os.path.join(root, file)
+
+                try:
+                    # 嘗試刪除檔案
+                    if file.lower() == '編圖結果.xlsx':
+                        os.remove(file_path)
+                    elif ext not in [".xlsx", ".gsheet"]:
+                        try:
+                            os.remove(file_path)
+                        except PermissionError:
+                            # 若遇到 PermissionError，終止佔用檔案的進程
+                            try:
+                                if os.name == 'nt':  # Windows 系統
+                                    command = f'handle.exe "{file_path}"'
+                                    output = subprocess.check_output(command, shell=True, text=True)
+                                    for line in output.splitlines():
+                                        if "pid:" in line.lower():
+                                            pid = int(line.split("pid:")[1].split()[0])
+                                            os.system(f"taskkill /PID {pid} /F")
+                                else:  # Linux/macOS 系統
+                                    command = f'lsof | grep "{file_path}"'
+                                    output = subprocess.check_output(command, shell=True, text=True)
+                                    for line in output.splitlines():
+                                        pid = int(line.split()[1])
+                                        os.kill(pid, 9)  # 強制終止進程
+                                os.remove(file_path)  # 再次嘗試刪除
+                            except Exception as e:
+                                st.warning(f"無法刪除檔案: {file_path}，錯誤: {str(e)}")
+                except PermissionError:
+                    # 使用 ctypes 嘗試解除文件鎖定
+                    try:
+                        if os.name == 'nt':  # 僅適用於 Windows
+                            ctypes.windll.kernel32.SetFileAttributesW(file_path, 0x80)
+                            os.remove(file_path)
+                    except Exception as e:
+                        st.warning(f"無法刪除檔案: {file_path}，錯誤: {str(e)}")
+
             for d in dirs:
-                shutil.rmtree(os.path.join(root, d))
+                shutil.rmtree(os.path.join(root, d), ignore_errors=True)
 
         # 從最終 zip 的內容解壓縮到 cover_path_input
         if "final_zip_content" in st.session_state and st.session_state["final_zip_content"]:
