@@ -213,10 +213,12 @@ def is_banned_angle(item_angle, rule_flags):
     for idx, rule in enumerate(angle_banning_rules):
         if rule_flags[idx]:
             if rule["banned_angle_logic"] == "等於":
-                if item_angle == rule["banned_angle"]:
+                # 若 banned_angle 是列表，檢查是否在其中
+                if item_angle in rule["banned_angle"]:
                     return True
             elif rule["banned_angle_logic"] == "包含":
-                if rule["banned_angle"] in item_angle:
+                # 若 banned_angle 是列表，檢查是否包含其中任意值
+                if any(banned in item_angle for banned in rule["banned_angle"]):
                     return True
     return False
 
@@ -694,12 +696,13 @@ with tab1:
             )
             angle_banning_rules = [
                 {
-                    "if_appears_in_angle": row.iloc[0].split(','),
-                    "banned_angle": row.iloc[1],
+                    "if_appears_in_angle": row.iloc[0].split(','),  # 解析第一欄
+                    "banned_angle": row.iloc[1].split(','),         # 解析第二欄為列表
                     "banned_angle_logic": row.iloc[2]
                 }
                 for _, row in angle_banning_df.iterrows()
             ]
+
             
             category_rules_df = pd.read_excel(
                 angle_filename_reference,
