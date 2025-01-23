@@ -457,6 +457,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
     """
     output_folder_path = "uploaded_images"
 
+    # 原有重新命名邏輯（完整保留）
     for result in results:
         folder_name = result["資料夾"]
         image_file = result["圖片"]
@@ -496,6 +497,7 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
         if os.path.exists(old_image_path) and old_image_path != new_image_path:
             os.rename(old_image_path, new_image_path)
 
+    # 原有跳過圖片處理邏輯（完整保留）
     for skipped in skipped_images:
         folder_name = skipped["資料夾"]
         image_file = skipped["圖片"]
@@ -520,10 +522,23 @@ def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_se
                     new_folder_name = f"{folder}_OK"
                 new_folder_path = os.path.join("uploaded_images", new_folder_name)
                 os.rename(folder_path, new_folder_path)
+
+                # === 新增保留空資料夾邏輯 ===
                 for root, dirs, files in os.walk(new_folder_path):
+                    # 手動添加空目錄
+                    for dir_name in dirs:
+                        dir_full_path = os.path.join(root, dir_name)
+                        zip_dir_path = os.path.relpath(dir_full_path, "uploaded_images") + "/"
+                        if zip_dir_path not in zipf.namelist():
+                            zip_info = zipfile.ZipInfo(zip_dir_path)
+                            zip_info.external_attr = (0o755 & 0xFFFF) << 16  # 兼容Windows
+                            zipf.writestr(zip_info, b"", zipfile.ZIP_STORED)
+
+                    # 原有檔案寫入邏輯
                     for file in files:
                         file_path = os.path.join(root, file)
                         zipf.write(file_path, os.path.relpath(file_path, "uploaded_images"))
+
         zipf.writestr("編圖結果.xlsx", output_excel_data)
 
     return zip_buffer.getvalue()
@@ -1694,6 +1709,7 @@ def handle_submission(selected_folder, images_to_display, outer_images_to_displa
 def clean_outer_images(zip_buffer):
     """
     從 ZIP buffer 中清理 1-Main 或 2-IMG 同層的圖片，並返回清理後的 ZIP buffer。
+    保留所有空資料夾，但排除 tmp_others 資料夾。
     """
     IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".psd", ".ai"]
     temp_dir = tempfile.mkdtemp()
@@ -1703,19 +1719,41 @@ def clean_outer_images(zip_buffer):
         with zipfile.ZipFile(zip_buffer, "r") as zip_file:
             zip_file.extractall(temp_dir)
 
+        # 清理同層的圖片檔案
         for root, dirs, files in os.walk(temp_dir):
+            # 排除 tmp_others 資料夾
+            if "tmp_others" in root.split(os.sep):
+                continue
+
             if "1-Main" in dirs or "2-IMG" in dirs:
                 for file in files:
                     file_path = os.path.join(root, file)
                     if os.path.splitext(file)[1].lower() in IMAGE_EXTENSIONS:
                         os.remove(file_path)
 
+        # 重新打包並保留空資料夾 (排除 tmp_others)
         with zipfile.ZipFile(cleaned_zip_buffer, "w", zipfile.ZIP_DEFLATED) as new_zip:
             for root, dirs, files in os.walk(temp_dir):
+                # 排除 tmp_others 資料夾及其所有內容
+                if "tmp_others" in root.split(os.sep):
+                    continue
+
+                # 手動添加空資料夾
+                for dir_name in dirs:
+                    dir_path = os.path.join(root, dir_name)
+                    if not os.listdir(dir_path):  # 空資料夾
+                        relative_dir = os.path.relpath(dir_path, temp_dir)
+                        # 檢查是否為 tmp_others 的子目錄
+                        if "tmp_others" not in relative_dir.split(os.sep):
+                            zip_info = zipfile.ZipInfo(relative_dir + "/")
+                            new_zip.writestr(zip_info, b"")
+
+                # 添加檔案 (排除 tmp_others)
                 for file in files:
                     file_path = os.path.join(root, file)
                     relative_path = os.path.relpath(file_path, temp_dir)
-                    new_zip.write(file_path, arcname=relative_path)
+                    if "tmp_others" not in relative_path.split(os.sep):
+                        new_zip.write(file_path, arcname=relative_path)
     finally:
         shutil.rmtree(temp_dir)
 
