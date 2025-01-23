@@ -1293,15 +1293,16 @@ def initialize_tab2():
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
 
-def setup_temporary_directory(base_path, tmp_dir, image_folder):
+def setup_temporary_directory(base_path, tmp_dir, read_folder):
     """
-    掃描 base_path 中的非圖片資料夾和檔案，並複製到臨時目錄。
-    排除與 1-Main 或 2-IMG 同層的圖片檔案。
-    :param base_path: 原始上傳的根目錄。
-    :param tmp_dir: 臨時目錄路徑。
-    :param image_folder: 圖片操作的資料夾名稱（如 '1-Main/All' 或 '2-IMG'）。
+    僅複製未被讀取的內容，最後檢查每個最外層資料夾：
+    - 如果有 2-IMG，則刪除 2-IMG 資料夾。
+    - 如果沒有 2-IMG，但有 1-Main，則刪除 1-Main 資料夾。
+
+    :param base_path: 原始目錄的根路徑
+    :param tmp_dir: 臨時目錄路徑
+    :param read_folder: 已被讀取的資料夾名稱（如 '2-IMG' 或 '1-Main/All'）
     """
-    # 檢查是否有舊的臨時目錄，若有則刪除
     if os.path.exists(tmp_dir):
         shutil.rmtree(tmp_dir, ignore_errors=True)
     os.makedirs(tmp_dir, exist_ok=True)
@@ -1341,6 +1342,21 @@ def setup_temporary_directory(base_path, tmp_dir, image_folder):
             except FileNotFoundError as e:
                 st.warning(f"無法建立路徑：{dest_path}，錯誤：{str(e)}")
 
+    # 最後檢查並刪除不需要的資料夾
+    for folder_name in os.listdir(tmp_dir):
+        folder_path = os.path.join(tmp_dir, folder_name)
+
+        if not os.path.isdir(folder_path):
+            continue
+
+        # 如果包含 2-IMG，刪除 2-IMG
+        two_img_path = os.path.join(folder_path, '2-IMG')
+        if os.path.exists(two_img_path):
+            shutil.rmtree(two_img_path)
+
+        # 如果不包含 2-IMG，但有 1-Main，刪除 1-Main
+        elif os.path.exists(os.path.join(folder_path, '1-Main')):
+            shutil.rmtree(os.path.join(folder_path, '1-Main'))
 
 def merge_temporary_directory_to_zip(zipf, tmp_dir):
     """
@@ -1348,7 +1364,7 @@ def merge_temporary_directory_to_zip(zipf, tmp_dir):
     :param zipf: ZIP 檔案物件。
     :param tmp_dir: 臨時目錄路徑。
     """
-    for root, dirs, files in os.walk(tmp_dir):
+    for root, dirs, files in os.walk(tmp_dir):   
         for file in files:
             file_path = os.path.join(root, file)
             relative_path = os.path.relpath(file_path, tmp_dir)
@@ -1370,10 +1386,10 @@ def get_outer_folder_images(folder_path):
         [
             f for f in os.listdir(folder_path)
             # 加入這行即可確保 .ai 不被視為「要顯示或改名」的檔案
-            # 注意：下方 tuple 沒有 .ai，所以會被忽略
             if f.lower().endswith(('png', 'jpg', 'jpeg', 'tif', 'tiff', 'psd'))
         ]
     )
+
 def get_prefix(image_files):
     """
     從圖片檔案中取得通用的命名前綴。
@@ -1679,8 +1695,7 @@ def clean_outer_images(zip_buffer):
     """
     從 ZIP buffer 中清理 1-Main 或 2-IMG 同層的圖片，並返回清理後的 ZIP buffer。
     """
-    # 原本的 IMAGE_EXTENSIONS 列表裡沒有 .ai，就代表它不會被清除
-    IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif",".psd",".ai"]
+    IMAGE_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".psd", ".ai"]
     temp_dir = tempfile.mkdtemp()
     cleaned_zip_buffer = BytesIO()
 
@@ -1692,7 +1707,6 @@ def clean_outer_images(zip_buffer):
             if "1-Main" in dirs or "2-IMG" in dirs:
                 for file in files:
                     file_path = os.path.join(root, file)
-                    # 只清除上述 EXTENSIONS，.ai 不在此列表，自然被保留
                     if os.path.splitext(file)[1].lower() in IMAGE_EXTENSIONS:
                         os.remove(file_path)
 
@@ -2181,203 +2195,397 @@ with tab2:
                             # 設定臨時目錄路徑
                             tmp_dir_for_others = os.path.join(tmpdirname, "tmp_others")
                             st.session_state["tmp_dir"] = tmp_dir_for_others  # 記錄到 session_state
-                    
-                            # **掃描非圖片檔案與資料夾，複製到臨時目錄**
+
+                            # 掃描非圖片檔案與資料夾，複製到臨時目錄
                             image_folder = "2-IMG" if os.path.exists(os.path.join(tmpdirname, "2-IMG")) else os.path.join("1-Main", "All")
                             setup_temporary_directory(tmpdirname, tmp_dir_for_others, image_folder)
-                    
+
+                            # ** 新增偵測 PSD 檔 **
+                            contains_psd = False
+                            for folder_name in top_level_folders:
+                                folder_path = os.path.join(tmpdirname, folder_name)
+                                for root, dirs, files in os.walk(folder_path):
+                                    if any(f.lower().endswith('.psd') for f in files):
+                                        contains_psd = True
+                                        break
+                                if contains_psd:
+                                    break
+
                             zip_buffer = BytesIO()
-                            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                                # 先壓縮頂層檔案
-                                top_level_files = [
-                                    name for name in os.listdir(tmpdirname)
-                                    if os.path.isfile(os.path.join(tmpdirname, name))
-                                ]
-                                for file_name in top_level_files:
-                                    file_path = os.path.join(tmpdirname, file_name)
-                                    arcname = file_name
-                                    try:
-                                        # 避免編圖結果.xlsx 重複打包
-                                        if file_name != '編圖結果.xlsx':
-                                            zipf.write(file_path, arcname=arcname)
-                                    except Exception as e:
-                                        st.error(f"壓縮檔案時發生錯誤：{file_name} - {str(e)}")
-                    
-                                # 再壓縮所有資料夾，並將經過使用者修改後的新檔名寫入壓縮包
-                                for folder_name in top_level_folders:
-                                    folder_path = os.path.join(tmpdirname, folder_name)
-                                    for root, dirs, files in os.walk(folder_path):
-                                        if "_MACOSX" in root or tmp_dir_for_others in root:
-                                            continue
-                                        for file in files:
-                                            full_path = os.path.join(root, file)
-                                            rel_path = os.path.relpath(full_path, tmpdirname)
-                                            path_parts = rel_path.split(os.sep)
-                    
-                                            original_file = file
-                                            if (folder_name in st.session_state['filename_changes']
-                                                    and original_file in st.session_state['filename_changes'][folder_name]):
-                                                data = st.session_state['filename_changes'][folder_name][original_file]
-                                                new_filename = data['new_filename']
-                                                if new_filename.strip() == '':
-                                                    new_rel_path = os.path.join(folder_name, original_file)
-                                                else:
-                                                    if use_full_filename:
-                                                        idx = path_parts.index(folder_name)
-                                                        path_parts = path_parts[:idx+1] + ['2-IMG', new_filename]
+
+                            # 情況 A：無 psd => 壓縮 + clean_outer_images + download_button
+                            if not contains_psd:
+                                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                                    # 先壓縮頂層檔案
+                                    top_level_files = [
+                                        name for name in os.listdir(tmpdirname)
+                                        if os.path.isfile(os.path.join(tmpdirname, name))
+                                    ]
+                                    for file_name in top_level_files:
+                                        file_path = os.path.join(tmpdirname, file_name)
+                                        arcname = file_name
+                                        try:
+                                            if file_name != '編圖結果.xlsx':
+                                                zipf.write(file_path, arcname=arcname)
+                                        except Exception as e:
+                                            st.error(f"壓縮檔案時發生錯誤：{file_name} - {str(e)}")
+
+                                    # 壓縮所有資料夾，並將經過修改後的檔名對應寫入
+                                    for folder_name in top_level_folders:
+                                        folder_path = os.path.join(tmpdirname, folder_name)
+                                        for root, dirs, files in os.walk(folder_path):
+                                            if "_MACOSX" in root or tmp_dir_for_others in root:
+                                                continue
+                                            for file in files:
+                                                full_path = os.path.join(root, file)
+                                                rel_path = os.path.relpath(full_path, tmpdirname)
+                                                path_parts = rel_path.split(os.sep)
+
+                                                original_file = file
+                                                if (folder_name in st.session_state['filename_changes']
+                                                        and original_file in st.session_state['filename_changes'][folder_name]):
+                                                    data = st.session_state['filename_changes'][folder_name][original_file]
+                                                    new_filename = data['new_filename']
+                                                    if new_filename.strip() == '':
+                                                        new_rel_path = os.path.join(folder_name, original_file)
                                                     else:
-                                                        idx = path_parts.index(folder_name)
-                                                        path_parts = path_parts[:idx+1] + ['1-Main', 'All', new_filename]
-                                                    new_rel_path = os.path.join(*path_parts)
-                    
-                                                try:
-                                                    if new_rel_path not in zipf.namelist():
-                                                        zipf.write(full_path, arcname=new_rel_path)
-                                                except Exception as e:
-                                                    st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
-                                            else:
-                                                try:
-                                                    zipf.write(full_path, arcname=rel_path)
-                                                except Exception as e:
-                                                    st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
-                    
-                                # 合併臨時目錄的內容到 ZIP，但不壓縮臨時目錄本身
-                                merge_temporary_directory_to_zip(zipf, tmp_dir_for_others)
-                    
-                                # 處理編圖結果.xlsx 之更新
-                                excel_buffer = BytesIO()
-                                if excel_sheets:
-                                    result_df = excel_sheets.get(
-                                        '編圖張數與廣告圖',
-                                        pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
-                                    )
-                                    for idx, row in result_df.iterrows():
-                                        data_folder_name = str(row['資料夾'])
-                                        if data_folder_name in st.session_state['folder_values']:
+                                                        if use_full_filename:
+                                                            idx = path_parts.index(folder_name)
+                                                            path_parts = path_parts[:idx+1] + ['2-IMG', new_filename]
+                                                        else:
+                                                            idx = path_parts.index(folder_name)
+                                                            path_parts = path_parts[:idx+1] + ['1-Main', 'All', new_filename]
+                                                        new_rel_path = os.path.join(*path_parts)
+
+                                                    try:
+                                                        if new_rel_path not in zipf.namelist():
+                                                            zipf.write(full_path, arcname=new_rel_path)
+                                                    except Exception as e:
+                                                        st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
+                                                else:
+                                                    try:
+                                                        zipf.write(full_path, arcname=rel_path)
+                                                    except Exception as e:
+                                                        st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
+
+                                    # 合併臨時目錄到 ZIP
+                                    merge_temporary_directory_to_zip(zipf, tmp_dir_for_others)
+
+                                    # 更新/寫回 編圖結果.xlsx
+                                    excel_buffer = BytesIO()
+                                    if excel_sheets:
+                                        result_df = excel_sheets.get(
+                                            '編圖張數與廣告圖',
+                                            pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
+                                        )
+                                        for idx, row in result_df.iterrows():
+                                            data_folder_name = str(row['資料夾'])
+                                            if data_folder_name in st.session_state['folder_values']:
+                                                num_images = st.session_state['folder_values'][data_folder_name]['張數']
+                                                ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
+                                                ad_images = f"{int(ad_images):02}"
+
+                                                result_df.at[idx, '張數'] = num_images
+                                                result_df.at[idx, '廣告圖'] = ad_images
+
+                                        existing_folders = set(result_df['資料夾'])
+                                        for data_folder_name in st.session_state['folder_values']:
+                                            if data_folder_name not in existing_folders:
+                                                num_images = st.session_state['folder_values'][data_folder_name]['張數']
+                                                ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
+                                                ad_images = f"{int(ad_images):02}"
+
+                                                new_row = pd.DataFrame([{
+                                                    '資料夾': data_folder_name,
+                                                    '張數': num_images,
+                                                    '廣告圖': ad_images
+                                                }])
+                                                result_df = pd.concat([result_df, new_row], ignore_index=True)
+
+                                        excel_sheets['編圖張數與廣告圖'] = result_df
+
+                                        type_result_df = excel_sheets.get(
+                                            '圖片類型統計',
+                                            pd.DataFrame(columns=['資料夾', '模特', '平拍'])
+                                        )
+                                        for idx, row in type_result_df.iterrows():
+                                            data_folder_name = str(row['資料夾'])
+                                            if data_folder_name in st.session_state['folder_values']:
+                                                model_images = st.session_state['folder_values'][data_folder_name]['模特']
+                                                flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
+
+                                                type_result_df.at[idx, '模特'] = model_images
+                                                type_result_df.at[idx, '平拍'] = flat_images
+
+                                        existing_type_folders = set(type_result_df['資料夾'])
+                                        for data_folder_name in st.session_state['folder_values']:
+                                            if data_folder_name not in existing_type_folders:
+                                                model_images = st.session_state['folder_values'][data_folder_name]['模特']
+                                                flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
+
+                                                new_row = pd.DataFrame([{
+                                                    '資料夾': data_folder_name,
+                                                    '模特': model_images,
+                                                    '平拍': flat_images,
+                                                }])
+                                                type_result_df = pd.concat([type_result_df, new_row], ignore_index=True)
+
+                                        excel_sheets['圖片類型統計'] = type_result_df
+
+                                        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                                            for sheet_name, df in excel_sheets.items():
+                                                df.to_excel(writer, index=False, sheet_name=sheet_name)
+                                    else:
+                                        result_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
+                                        type_result_df = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
+
+                                        for data_folder_name in st.session_state['folder_values']:
                                             num_images = st.session_state['folder_values'][data_folder_name]['張數']
                                             ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
                                             ad_images = f"{int(ad_images):02}"
-                    
-                                            result_df.at[idx, '張數'] = num_images
-                                            result_df.at[idx, '廣告圖'] = ad_images
-                    
-                                    existing_folders = set(result_df['資料夾'])
-                                    for data_folder_name in st.session_state['folder_values']:
-                                        if data_folder_name not in existing_folders:
-                                            num_images = st.session_state['folder_values'][data_folder_name]['張數']
-                                            ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
-                                            ad_images = f"{int(ad_images):02}"
-                    
                                             new_row = pd.DataFrame([{
                                                 '資料夾': data_folder_name,
                                                 '張數': num_images,
                                                 '廣告圖': ad_images
                                             }])
                                             result_df = pd.concat([result_df, new_row], ignore_index=True)
-                    
-                                    excel_sheets['編圖張數與廣告圖'] = result_df
-                    
-                                    type_result_df = excel_sheets.get(
-                                        '圖片類型統計',
-                                        pd.DataFrame(columns=['資料夾', '模特', '平拍'])
-                                    )
-                                    for idx, row in type_result_df.iterrows():
-                                        data_folder_name = str(row['資料夾'])
-                                        if data_folder_name in st.session_state['folder_values']:
+
                                             model_images = st.session_state['folder_values'][data_folder_name]['模特']
                                             flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
-                    
-                                            type_result_df.at[idx, '模特'] = model_images
-                                            type_result_df.at[idx, '平拍'] = flat_images
-                    
-                                    existing_type_folders = set(type_result_df['資料夾'])
-                                    for data_folder_name in st.session_state['folder_values']:
-                                        if data_folder_name not in existing_type_folders:
-                                            model_images = st.session_state['folder_values'][data_folder_name]['模特']
-                                            flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
-                    
-                                            new_row = pd.DataFrame([{
+                                            new_type_row = pd.DataFrame([{
                                                 '資料夾': data_folder_name,
                                                 '模特': model_images,
                                                 '平拍': flat_images,
                                             }])
-                                            type_result_df = pd.concat([type_result_df, new_row], ignore_index=True)
-                    
-                                    excel_sheets['圖片類型統計'] = type_result_df
-                    
-                                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                                        for sheet_name, df in excel_sheets.items():
-                                            df.to_excel(writer, index=False, sheet_name=sheet_name)
-                                else:
-                                    result_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
-                                    type_result_df = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
-                    
-                                    for data_folder_name in st.session_state['folder_values']:
-                                        num_images = st.session_state['folder_values'][data_folder_name]['張數']
-                                        ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
-                                        ad_images = f"{int(ad_images):02}"
-                                        new_row = pd.DataFrame([{
-                                            '資料夾': data_folder_name,
-                                            '張數': num_images,
-                                            '廣告圖': ad_images
-                                        }])
-                                        result_df = pd.concat([result_df, new_row], ignore_index=True)
-                    
-                                        model_images = st.session_state['folder_values'][data_folder_name]['模特']
-                                        flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
-                                        new_type_row = pd.DataFrame([{
-                                            '資料夾': data_folder_name,
-                                            '模特': model_images,
-                                            '平拍': flat_images,
-                                        }])
-                                        type_result_df = pd.concat([type_result_df, new_type_row], ignore_index=True)
-                    
-                                    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                                        result_df.to_excel(writer, index=False, sheet_name='編圖張數與廣告圖')
-                                        type_result_df.to_excel(writer, index=False, sheet_name='圖片類型統計')
-                    
-                                excel_buffer.seek(0)
-                                zipf.writestr('編圖結果.xlsx', excel_buffer.getvalue())
+                                            type_result_df = pd.concat([type_result_df, new_type_row], ignore_index=True)
 
-                            zip_buffer.seek(0)
-                            st.session_state["final_zip_content"] = zip_buffer.getvalue()
-                    
-                            cleaned_zip_buffer = clean_outer_images(zip_buffer)
-                    
-                            # 刪除臨時目錄
-                            if "tmp_dir" in st.session_state and os.path.exists(st.session_state["tmp_dir"]):
-                                shutil.rmtree(st.session_state["tmp_dir"], ignore_errors=True)
-                    
-                            # 命名下載檔案
-                            if uploaded_file_2:
-                                download_file_name = uploaded_file_2.name.replace(".zip", "_已複檢.zip")
-                            elif input_path_2:
-                                folder_name = os.path.basename(input_path_2.strip(os.sep))
-                                download_file_name = f"{folder_name}__已複檢.zip"
+                                        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                                            result_df.to_excel(writer, index=False, sheet_name='編圖張數與廣告圖')
+                                            type_result_df.to_excel(writer, index=False, sheet_name='圖片類型統計')
+
+                                    excel_buffer.seek(0)
+                                    zipf.writestr('編圖結果.xlsx', excel_buffer.getvalue())
+
+                                zip_buffer.seek(0)
+                                st.session_state["final_zip_content"] = zip_buffer.getvalue()
+
+                                # 執行 clean_outer_images
+                                cleaned_zip_buffer = clean_outer_images(zip_buffer)
+
+                                # 命名下載檔案
+                                if uploaded_file_2:
+                                    download_file_name = uploaded_file_2.name.replace(".zip", "_已複檢.zip")
+                                elif input_path_2:
+                                    folder_name = os.path.basename(input_path_2.strip(os.sep))
+                                    download_file_name = f"{folder_name}__已複檢.zip"
+                                else:
+                                    download_file_name = "結果_已複檢.zip"
+
+                                # 仍使用 download_button
+                                col1_, col2_ = st.columns([2.7, 1],vertical_alignment="center")
+                                if st.session_state["input_path_from_tab1"]:
+                                    cover_text_default = st.session_state.get("input_path_from_tab1")
+                                elif not uploaded_file_2 and input_path_2:
+                                    cover_text_default = input_path_2.strip()
+                                else:
+                                    cover_text_default = ""
+
+                                cover_path_input = col1_.text_input(
+                                    label="同步覆蓋此路徑的檔案",
+                                    value=cover_text_default,
+                                    placeholder="   輸入分包資料夾路徑以直接覆蓋原檔案 (選填)",
+                                )
+                                col2_.download_button(
+                                    label='下載修改後的檔案',
+                                    data=cleaned_zip_buffer,
+                                    file_name=download_file_name,
+                                    mime='application/zip',
+                                    on_click=cover_path_and_reset_key_tab2
+                                )
+
+                            # 情況 B：有 psd => 改用 ZIP_STORED、不呼叫 clean_outer_images，改用 st.button
                             else:
-                                download_file_name = "結果_已複檢.zip"
-                    
-                            col1_, col2_ = st.columns([2.7, 1])
-                    
-                            if st.session_state["input_path_from_tab1"]:
-                                cover_text_default = st.session_state.get("input_path_from_tab1")
-                            elif not uploaded_file_2 and input_path_2:
-                                cover_text_default = input_path_2.strip()
-                            else:
-                                cover_text_default = ""
-                    
-                            cover_path_input = col1_.text_input(
-                                label="同步覆蓋此路徑的檔案",
-                                value=cover_text_default,
-                                placeholder="   輸入分包資料夾路徑以直接覆蓋原檔案 (選填)",
-                            )
-                            col2_.download_button(
-                                label='下載修改後的檔案',
-                                data=cleaned_zip_buffer,
-                                file_name=download_file_name,
-                                mime='application/zip',
-                                on_click=cover_path_and_reset_key_tab2
-                            )
+                                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_STORED) as zipf:
+                                    # 先壓縮頂層檔案
+                                    top_level_files = [
+                                        name for name in os.listdir(tmpdirname)
+                                        if os.path.isfile(os.path.join(tmpdirname, name))
+                                    ]
+                                    for file_name in top_level_files:
+                                        file_path = os.path.join(tmpdirname, file_name)
+                                        arcname = file_name
+                                        try:
+                                            if file_name != '編圖結果.xlsx':
+                                                zipf.write(file_path, arcname=arcname)
+                                        except Exception as e:
+                                            st.error(f"壓縮檔案時發生錯誤：{file_name} - {str(e)}")
+
+                                    # 壓縮所有資料夾，並將經過修改後的檔名對應寫入
+                                    for folder_name in top_level_folders:
+                                        folder_path = os.path.join(tmpdirname, folder_name)
+                                        for root, dirs, files in os.walk(folder_path):
+                                            if "_MACOSX" in root or tmp_dir_for_others in root:
+                                                continue
+                                            for file in files:
+                                                full_path = os.path.join(root, file)
+                                                rel_path = os.path.relpath(full_path, tmpdirname)
+                                                path_parts = rel_path.split(os.sep)
+
+                                                original_file = file
+                                                if (folder_name in st.session_state['filename_changes']
+                                                        and original_file in st.session_state['filename_changes'][folder_name]):
+                                                    data = st.session_state['filename_changes'][folder_name][original_file]
+                                                    new_filename = data['new_filename']
+                                                    if new_filename.strip() == '':
+                                                        new_rel_path = os.path.join(folder_name, original_file)
+                                                    else:
+                                                        if use_full_filename:
+                                                            idx = path_parts.index(folder_name)
+                                                            path_parts = path_parts[:idx+1] + ['2-IMG', new_filename]
+                                                        else:
+                                                            idx = path_parts.index(folder_name)
+                                                            path_parts = path_parts[:idx+1] + ['1-Main', 'All', new_filename]
+                                                        new_rel_path = os.path.join(*path_parts)
+
+                                                    try:
+                                                        if new_rel_path not in zipf.namelist():
+                                                            zipf.write(full_path, arcname=new_rel_path)
+                                                    except Exception as e:
+                                                        st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
+                                                else:
+                                                    try:
+                                                        zipf.write(full_path, arcname=rel_path)
+                                                    except Exception as e:
+                                                        st.error(f"壓縮檔案時發生錯誤：{full_path} - {str(e)}")
+
+                                    # 合併臨時目錄到 ZIP
+                                    merge_temporary_directory_to_zip(zipf, tmp_dir_for_others)
+
+                                    # 更新/寫回 編圖結果.xlsx
+                                    excel_buffer = BytesIO()
+                                    if excel_sheets:
+                                        result_df = excel_sheets.get(
+                                            '編圖張數與廣告圖',
+                                            pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
+                                        )
+                                        for idx, row in result_df.iterrows():
+                                            data_folder_name = str(row['資料夾'])
+                                            if data_folder_name in st.session_state['folder_values']:
+                                                num_images = st.session_state['folder_values'][data_folder_name]['張數']
+                                                ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
+                                                ad_images = f"{int(ad_images):02}"
+
+                                                result_df.at[idx, '張數'] = num_images
+                                                result_df.at[idx, '廣告圖'] = ad_images
+
+                                        existing_folders = set(result_df['資料夾'])
+                                        for data_folder_name in st.session_state['folder_values']:
+                                            if data_folder_name not in existing_folders:
+                                                num_images = st.session_state['folder_values'][data_folder_name]['張數']
+                                                ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
+                                                ad_images = f"{int(ad_images):02}"
+
+                                                new_row = pd.DataFrame([{
+                                                    '資料夾': data_folder_name,
+                                                    '張數': num_images,
+                                                    '廣告圖': ad_images
+                                                }])
+                                                result_df = pd.concat([result_df, new_row], ignore_index=True)
+
+                                        excel_sheets['編圖張數與廣告圖'] = result_df
+
+                                        type_result_df = excel_sheets.get(
+                                            '圖片類型統計',
+                                            pd.DataFrame(columns=['資料夾', '模特', '平拍'])
+                                        )
+                                        for idx, row in type_result_df.iterrows():
+                                            data_folder_name = str(row['資料夾'])
+                                            if data_folder_name in st.session_state['folder_values']:
+                                                model_images = st.session_state['folder_values'][data_folder_name]['模特']
+                                                flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
+
+                                                type_result_df.at[idx, '模特'] = model_images
+                                                type_result_df.at[idx, '平拍'] = flat_images
+
+                                        existing_type_folders = set(type_result_df['資料夾'])
+                                        for data_folder_name in st.session_state['folder_values']:
+                                            if data_folder_name not in existing_type_folders:
+                                                model_images = st.session_state['folder_values'][data_folder_name]['模特']
+                                                flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
+
+                                                new_row = pd.DataFrame([{
+                                                    '資料夾': data_folder_name,
+                                                    '模特': model_images,
+                                                    '平拍': flat_images,
+                                                }])
+                                                type_result_df = pd.concat([type_result_df, new_row], ignore_index=True)
+
+                                        excel_sheets['圖片類型統計'] = type_result_df
+
+                                        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                                            for sheet_name, df in excel_sheets.items():
+                                                df.to_excel(writer, index=False, sheet_name=sheet_name)
+                                    else:
+                                        result_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
+                                        type_result_df = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
+
+                                        for data_folder_name in st.session_state['folder_values']:
+                                            num_images = st.session_state['folder_values'][data_folder_name]['張數']
+                                            ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
+                                            ad_images = f"{int(ad_images):02}"
+                                            new_row = pd.DataFrame([{
+                                                '資料夾': data_folder_name,
+                                                '張數': num_images,
+                                                '廣告圖': ad_images
+                                            }])
+                                            result_df = pd.concat([result_df, new_row], ignore_index=True)
+
+                                            model_images = st.session_state['folder_values'][data_folder_name]['模特']
+                                            flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
+                                            new_type_row = pd.DataFrame([{
+                                                '資料夾': data_folder_name,
+                                                '模特': model_images,
+                                                '平拍': flat_images,
+                                            }])
+                                            type_result_df = pd.concat([type_result_df, new_type_row], ignore_index=True)
+
+                                        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+                                            result_df.to_excel(writer, index=False, sheet_name='編圖張數與廣告圖')
+                                            type_result_df.to_excel(writer, index=False, sheet_name='圖片類型統計')
+
+                                    excel_buffer.seek(0)
+                                    zipf.writestr('編圖結果.xlsx', excel_buffer.getvalue())
+
+                                zip_buffer.seek(0)
+                                st.session_state["final_zip_content"] = zip_buffer.getvalue()
+
+                                # 命名下載檔案(維持原邏輯)
+                                if uploaded_file_2:
+                                    download_file_name = uploaded_file_2.name.replace(".zip", "_已複檢.zip")
+                                elif input_path_2:
+                                    folder_name = os.path.basename(input_path_2.strip(os.sep))
+                                    download_file_name = f"{folder_name}__已複檢.zip"
+                                else:
+                                    download_file_name = "結果_已複檢.zip"
+
+                                # 改用 st.button，點擊時覆蓋
+                                col1_, col2_ = st.columns([2.7, 1],vertical_alignment="center")
+                                if st.session_state["input_path_from_tab1"]:
+                                    cover_text_default = st.session_state.get("input_path_from_tab1")
+                                elif not uploaded_file_2 and input_path_2:
+                                    cover_text_default = input_path_2.strip()
+                                else:
+                                    cover_text_default = ""
+
+                                cover_path_input = col1_.text_input(
+                                    label="同步覆蓋此路徑的檔案",
+                                    value=cover_text_default,
+                                    placeholder="   輸入分包資料夾路徑以直接覆蓋原檔案 (選填)",
+                                )
+                                col2_.button(
+                                    label='覆蓋舊檔案',
+                                    on_click=cover_path_and_reset_key_tab2
+                                )
                 else:
                     st.error("未找到圖片。")
             else:
