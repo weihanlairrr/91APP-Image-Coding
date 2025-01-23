@@ -19,6 +19,7 @@ import functools
 import imagecodecs
 import ctypes
 import subprocess
+import sys
 from psd_tools import PSDImage
 
 st.set_page_config(page_title='TP自動編圖工具', page_icon='👕', layout="wide")
@@ -1398,20 +1399,31 @@ def add_image_label(image, file_extension):
         return image  # 不支援的格式，直接回傳
 
     # 設定字體大小
+    font_size = max(30, int(image.width * 0.12))
+    
     try:
-        font_size = max(30, int(image.width * 0.12))
-        font = ImageFont.truetype("arial.ttf", font_size)
+        # 優先嘗試 macOS 系統字體
+        if sys.platform == 'darwin':
+            font = ImageFont.truetype("/System/Library/Fonts/Supplemental/Arial.ttf", font_size)
+        else:
+            font = ImageFont.truetype("arial.ttf", font_size)
     except OSError:
-        font = ImageFont.truetype("NotoSansCJK-Regular.ttc", font_size)
+        try:
+            # 次選跨平台開源字體
+            font = ImageFont.truetype("DejaVuSans.ttf", font_size)
+        except OSError:
+            # 終極回退使用 Pillow 預設字體
+            font = ImageFont.load_default()
 
+    # 文字位置計算
     text_bbox = draw.textbbox((0, 0), label_text, font=font)
     text_width = text_bbox[2] - text_bbox[0]
 
+    # 文字定位 (右上角)
     x = image.width - text_width - 20
     y = 20
 
-    # 添加文字背景以增加對比度（可選）
-    draw.text((x, y), label_text, font=font, fill="red")
+    # 添加文字（紅色粗體效果）
     draw.text((x, y), label_text, font=font, fill="red")
     return image
 
