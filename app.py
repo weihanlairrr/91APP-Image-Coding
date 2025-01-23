@@ -39,6 +39,12 @@ section.stMain {
         padding-right: 19%;
     }
 }
+@media (max-width: 1400px) {
+    section.stMain {
+        padding-left: 8%;
+        padding-right: 8%;
+    }
+}
 div.stTextInput > label {
     display: none;
 }   
