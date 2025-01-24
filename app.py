@@ -1783,7 +1783,7 @@ def cover_path_and_reset_key_tab2():
                     # 嘗試刪除檔案
                     if file.lower() == '編圖結果.xlsx':
                         os.remove(file_path)
-                    elif ext not in [".xlsx", ".gsheet"]:
+                    elif ext not in [".xlsx", ".gsheet", ".ai"]:
                         try:
                             os.remove(file_path)
                         except PermissionError:
