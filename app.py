@@ -1464,21 +1464,38 @@ def add_image_label(image, file_extension):
     draw.text((x, y), label_text, font=font, fill="red")
     return image
 
+
 @functools.lru_cache(maxsize=128)
 def load_and_process_image(image_path, add_label=False):
     """
     加載並處理圖片，支持 PSD 格式。
+    **已優化：針對 PSD 首次也能加速，透過 lazy=True 解析內嵌 Composite + 快取為 JPG**
     """
     ext = os.path.splitext(image_path)[1].lower()
 
-    # 對 PSD 圖片進行處理
     if ext == '.psd':
-        image = PSDImage.open(image_path).composite()
-        if image:
-            image = image.convert('RGB')  # 確保與其他格式一致
+        # 針對 PSD 進行快取，減少重複解析
+        cache_dir = os.path.join(tempfile.gettempdir(), "psd_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        # 以 hash(image_path) 作為緩存檔名 (可自行改為更穩定的哈希函式)
+        cache_file_name = str(abs(hash(image_path))) + ".jpg"
+        cache_path = os.path.join(cache_dir, cache_file_name)
+
+        # 若快取檔案已存在，直接讀取
+        if os.path.exists(cache_path):
+            image = Image.open(cache_path).convert('RGB')
         else:
-            raise Exception("無法處理 PSD 文件")
+            # 使用 psd_tools 的 lazy 模式與內嵌 composite
+            psd = PSDImage.open(image_path, lazy=True)
+            image = psd.composite(force=False)
+            if image:
+                image = image.convert('RGB')
+                # 存入快取目錄，後續讀取 PSD 時優先載入該 JPG
+                image.save(cache_path, format='JPEG', quality=80)
+            else:
+                raise Exception("無法處理 PSD 文件")
     else:
+        # 其他格式保持不變
         try:
             image = Image.open(image_path).convert('RGB')
         except UnidentifiedImageError:
@@ -1494,6 +1511,7 @@ def load_and_process_image(image_path, add_label=False):
     # 統一大小
     image = ImageOps.pad(image, (1000, 1000), method=Image.Resampling.LANCZOS)
     return image
+
 
 def handle_file_uploader_change_tab2():
     """
@@ -1742,10 +1760,10 @@ def clean_outer_images(zip_buffer):
                 for dir_name in dirs:
                     dir_path = os.path.join(root, dir_name)
                     if not os.listdir(dir_path):  # 空資料夾
-                        relative_dir = os.path.relpath(dir_path, temp_dir)
+                        relative_path = os.path.relpath(dir_path, temp_dir)
                         # 檢查是否為 tmp_others 的子目錄
-                        if "tmp_others" not in relative_dir.split(os.sep):
-                            zip_info = zipfile.ZipInfo(relative_dir + "/")
+                        if "tmp_others" not in relative_path.split(os.sep):
+                            zip_info = zipfile.ZipInfo(relative_path + "/")
                             new_zip.writestr(zip_info, b"")
 
                 # 添加檔案 (排除 tmp_others)
