@@ -1182,7 +1182,7 @@ def tab2():
                                     cover_text_default = input_path_2.strip()
                                 else:
                                     cover_text_default = ""
-
+                                
                                 cover_path_input = col1_.text_input(
                                     label="同步覆蓋此路徑的檔案",
                                     value=cover_text_default,
@@ -1351,15 +1351,6 @@ def tab2():
 
                                 zip_buffer.seek(0)
                                 st.session_state["final_zip_content"] = zip_buffer.getvalue()
-
-                                # 命名下載檔案(維持原邏輯)
-                                if uploaded_file_2:
-                                    download_file_name = uploaded_file_2.name.replace(".zip", "_已複檢.zip")
-                                elif input_path_2:
-                                    folder_name = os.path.basename(input_path_2.strip(os.sep))
-                                    download_file_name = f"{folder_name}__已複檢.zip"
-                                else:
-                                    download_file_name = "結果_已複檢.zip"
 
                                 # 改用 st.button，點擊時覆蓋
                                 col1_, col2_ = st.columns([2.7, 1],vertical_alignment="center")
