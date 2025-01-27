@@ -669,6 +669,7 @@ def tab2():
             name for name in os.listdir(tmpdirname)
             if os.path.isdir(os.path.join(tmpdirname, name))
             and not name.startswith(('_', '.'))
+            and name != "tmp_others"  
         ]
 
         for folder_name in top_level_folders:
