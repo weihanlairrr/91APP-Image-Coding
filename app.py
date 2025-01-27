@@ -93,6 +93,15 @@ header[data-testid="stHeader"] {
     display: flex;
     justify-content: flex-end; 
 }
+[data-testid='stBaseButton-secondary'] {
+  text-indent: -9999px;
+  line-height: 0;
+}
+[data-testid='stBaseButton-secondary']::after {
+  line-height: initial;
+  content: "瀏覽檔案";
+  text-indent: 0;
+}
 </style>
 """
 st.markdown(custom_css, unsafe_allow_html=True)
