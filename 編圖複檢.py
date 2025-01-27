@@ -10,7 +10,6 @@ import imagecodecs
 import ctypes
 import subprocess
 import sys
-
 from io import BytesIO
 from psd_tools import PSDImage
 from collections import Counter, defaultdict
@@ -596,7 +595,7 @@ def tab2():
     
     initialize_tab2()
     st.write("\n")
-    col1, col2 = st.columns([1.6, 1])
+    col1, col2 = st.columns(2)
 
     uploaded_file_2 = col1.file_uploader(
         "上傳編圖結果 ZIP 檔",
@@ -607,7 +606,7 @@ def tab2():
     )
     input_path_2 = col2.text_area(
         "或 輸入資料夾路徑",
-        height=78,
+        height=74,
         key='text_area_' + str(st.session_state['text_area_key2']),
         disabled=st.session_state['text_area_disabled_2'],
         on_change=handle_text_area_change_tab2
