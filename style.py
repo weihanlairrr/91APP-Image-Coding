@@ -72,6 +72,16 @@ header[data-testid="stHeader"] {
   line-height: initial;
   content: "瀏覽檔案";
   text-indent: 0;
+  font-size: 14px;
 }
+[data-testid='stFileUploaderDropzoneInstructions'] > div > span {
+  display: none;
+}
+[data-testid='stFileUploaderDropzoneInstructions'] > div::before {
+  content: '將文件拖放到此處';
+  font-size: 14px;
+  margin-bottom: 3px; 
+}
+
 </style>
 """
