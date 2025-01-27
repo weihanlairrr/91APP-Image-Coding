@@ -837,7 +837,7 @@ def tab2():
 
                                 # 預設檔名(不使用完整檔名需排除 prefix)
                                 filename_without_ext = os.path.splitext(image_file)[0]
-                                extension = os.path.splitext(image_file)[1]
+                                
 
                                 if use_full_filename:
                                     default_text = filename_without_ext
@@ -953,7 +953,7 @@ def tab2():
                                     col.image(outer_image, use_container_width=True)
 
                                     filename_without_ext = os.path.splitext(outer_image_file)[0]
-                                    extension = os.path.splitext(outer_image_file)[1]
+                                    
 
                                     if use_full_filename:
                                         default_text = filename_without_ext
