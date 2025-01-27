@@ -64,16 +64,18 @@ header[data-testid="stHeader"] {
     display: flex;
     justify-content: flex-end; 
 }
-[data-testid='stBaseButton-secondary'] {
+[data-testid="stFileUploader"] [data-testid='stBaseButton-secondary'] {
   text-indent: -9999px;
   line-height: 0;
 }
-[data-testid='stBaseButton-secondary']::after {
+
+[data-testid="stFileUploader"] [data-testid='stBaseButton-secondary']::after {
   line-height: initial;
   content: "瀏覽檔案";
   text-indent: 0;
   font-size: 14px;
 }
+
 [data-testid='stFileUploaderDropzoneInstructions'] > div > span {
   display: none;
 }
@@ -82,6 +84,40 @@ header[data-testid="stHeader"] {
   font-size: 14px;
   margin-bottom: 3px; 
 }
+.eyeqlp53.st-emotion-cache-1b2ybts.ex0cdmw0 {
+    width: 15px !important; /* 調整寬度 */
+    height: 15px !important; /* 調整高度 */
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+.st-emotion-cache-clky9d {
+    width: 22px !important;
+    height: 22px !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+.stFileUploaderFileName {
+    font-size: 15px !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+.st-emotion-cache-1aehpvj {
+    font-size: 13px !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+[data-testid="stFileUploaderDeleteBtn"] button {
+    padding: 0px 10px !important; /* 調整按鈕內部間距 */
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+/* 調整 st.divider 的上下空間 */
+[data-testid="stMarkdownContainer"] hr {
+    margin-top: 6px !important;
+    margin-bottom: 14px !important;
+    border-width: 1px !important;
+}
+
 
 </style>
 """
