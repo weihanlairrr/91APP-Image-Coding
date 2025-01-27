@@ -11,7 +11,6 @@ import tempfile
 import chardet
 import faiss  
 import imagecodecs
-
 from torchvision import models, transforms
 from io import BytesIO
 from PIL import Image, UnidentifiedImageError
@@ -505,7 +504,7 @@ def tab1():
     preprocess = get_preprocess_transforms()
 
     st.write("\n")
-    col1, col2 = st.columns([1.6, 1])
+    col1, col2 = st.columns(2)
 
     uploaded_zip = col1.file_uploader(
         "上傳 ZIP 檔案",
@@ -517,7 +516,7 @@ def tab1():
 
     input_path = col2.text_area(
         "或 輸入資料夾路徑",
-        height=78,
+        height=74,
         key='text_area_' + str(st.session_state['text_area_key1']),
         disabled=st.session_state['text_area_disabled_1'],
         on_change=handle_text_area_change
