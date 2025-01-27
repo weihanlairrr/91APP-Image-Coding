@@ -606,7 +606,7 @@ def tab2():
     )
     input_path_2 = col2.text_area(
         "或 輸入資料夾路徑",
-        height=74,
+        height=72,
         key='text_area_' + str(st.session_state['text_area_key2']),
         disabled=st.session_state['text_area_disabled_2'],
         on_change=handle_text_area_change_tab2
