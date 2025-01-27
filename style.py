@@ -80,8 +80,8 @@ header[data-testid="stHeader"] {
   display: none;
 }
 [data-testid='stFileUploaderDropzoneInstructions'] > div::before {
-  content: '將文件拖放到此處';
-  font-size: 14px;
+  content: '上傳 ZIP 檔';
+  font-size: 15px;
   margin-bottom: 3px; 
 }
 .eyeqlp53.st-emotion-cache-1b2ybts.ex0cdmw0 {
@@ -117,6 +117,5 @@ header[data-testid="stHeader"] {
     margin-bottom: 14px !important;
     border-width: 1px !important;
 }
-
 </style>
 """
