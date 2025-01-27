@@ -73,7 +73,7 @@ header[data-testid="stHeader"] {
   line-height: initial;
   content: "瀏覽檔案";
   text-indent: 0;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 [data-testid='stFileUploaderDropzoneInstructions'] > div > span {
@@ -85,8 +85,8 @@ header[data-testid="stHeader"] {
   margin-bottom: 3px; 
 }
 .eyeqlp53.st-emotion-cache-1b2ybts.ex0cdmw0 {
-    width: 15px !important; /* 調整寬度 */
-    height: 15px !important; /* 調整高度 */
+    width: 15px !important; 
+    height: 15px !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
@@ -107,7 +107,7 @@ header[data-testid="stHeader"] {
     margin-bottom: 0 !important;
 }
 [data-testid="stFileUploaderDeleteBtn"] button {
-    padding: 0px 10px !important; /* 調整按鈕內部間距 */
+    padding: 0px 10px !important; 
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
@@ -117,7 +117,6 @@ header[data-testid="stHeader"] {
     margin-bottom: 14px !important;
     border-width: 1px !important;
 }
-
 
 </style>
 """
