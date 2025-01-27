@@ -602,14 +602,17 @@ def tab2():
         type=["zip"],
         key='file_uploader_' + str(st.session_state['file_uploader_key2']),
         disabled=st.session_state['file_uploader_disabled_2'],
-        on_change=handle_file_uploader_change_tab2
+        on_change=handle_file_uploader_change_tab2,
+        label_visibility="collapsed"
     )
     input_path_2 = col2.text_area(
         "或 輸入資料夾路徑",
         height=72,
         key='text_area_' + str(st.session_state['text_area_key2']),
         disabled=st.session_state['text_area_disabled_2'],
-        on_change=handle_text_area_change_tab2
+        on_change=handle_text_area_change_tab2,
+        placeholder = "  或輸入分包資料夾路徑",
+        label_visibility="collapsed"
     )
 
     if uploaded_file_2 or input_path_2:
