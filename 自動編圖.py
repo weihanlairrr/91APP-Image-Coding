@@ -516,12 +516,12 @@ def tab1():
     )
 
     input_path = col2.text_area(
-        "或 輸入資料夾路徑",
+        "   輸入資料夾路徑",
         height=72,
         key='text_area_' + str(st.session_state['text_area_key1']),
         disabled=st.session_state['text_area_disabled_1'],
         on_change=handle_text_area_change,
-        placeholder = "  或輸入分包資料夾路徑",
+        placeholder = "  輸入分包資料夾路徑",
         label_visibility="collapsed"
     )
 
