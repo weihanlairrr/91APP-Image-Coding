@@ -85,14 +85,14 @@ header[data-testid="stHeader"] {
   margin-bottom: 3px; 
 }
 .eyeqlp53.st-emotion-cache-1b2ybts.ex0cdmw0 {
-    width: 15px !important; 
-    height: 15px !important;
+    width: 17px !important; 
+    height: 17px !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
 .st-emotion-cache-clky9d {
-    width: 22px !important;
-    height: 22px !important;
+    width: 24px !important;
+    height: 24px !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
@@ -102,7 +102,7 @@ header[data-testid="stHeader"] {
     margin-bottom: 0 !important;
 }
 .st-emotion-cache-1aehpvj {
-    font-size: 13px !important;
+    font-size: 14px !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
