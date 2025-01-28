@@ -606,12 +606,12 @@ def tab2():
         label_visibility="collapsed"
     )
     input_path_2 = col2.text_area(
-        "或 輸入資料夾路徑",
+        "   輸入資料夾路徑",
         height=72,
         key='text_area_' + str(st.session_state['text_area_key2']),
         disabled=st.session_state['text_area_disabled_2'],
         on_change=handle_text_area_change_tab2,
-        placeholder = "  或輸入分包資料夾路徑",
+        placeholder = "  輸入分包資料夾路徑",
         label_visibility="collapsed"
     )
 
@@ -987,7 +987,7 @@ def tab2():
 
                     # 所有資料夾均確認完成
                     if st.checkbox("所有資料夾均確認完成"):
-                        with st.spinner('修改檔名中...'):
+                        with st.spinner('檔案處理中...'):
                             # 設定臨時目錄路徑
                             tmp_dir_for_others = os.path.join(tmpdirname, "tmp_others")
                             st.session_state["tmp_dir"] = tmp_dir_for_others  # 記錄到 session_state
