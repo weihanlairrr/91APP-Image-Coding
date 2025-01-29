@@ -16,6 +16,21 @@ from io import BytesIO
 from PIL import Image, UnidentifiedImageError
 
 def tab1():
+    def initialize_tab1():
+        # 設定所有預設值
+        defaults = {
+            'file_uploader_key1': 0,
+            'text_area_key1': 0,
+            'file_uploader_disabled_1': False,
+            'text_area_disabled_1': False,
+            'text_area_content': "",
+            'previous_uploaded_file_name_tab1': None,
+            'previous_input_path_tab1': None
+        }
+        for key, value in defaults.items():
+            if key not in st.session_state:
+                st.session_state[key] = value
+                
     def find_brand_files(brand_name):
         """
         在指定品牌資料夾下，自動尋找包含 'image_features' 的 pkl 檔與
@@ -482,24 +497,9 @@ def tab1():
             with open(selected_brand_file, "w", encoding="utf-8") as f:
                 f.write(last_selected_brand)
         else:
-            # 沒有任何品牌資料夾時就給個空值
             last_selected_brand = ""
     
-    if 'file_uploader_key1' not in st.session_state:
-        st.session_state['file_uploader_key1'] = 0
-    if 'text_area_key1' not in st.session_state:
-        st.session_state['text_area_key1'] = 0
-    if 'file_uploader_disabled_1' not in st.session_state:
-        st.session_state['file_uploader_disabled_1'] = False
-    if 'text_area_disabled_1' not in st.session_state:
-        st.session_state['text_area_disabled_1'] = False
-    if 'text_area_content' not in st.session_state:
-        st.session_state['text_area_content'] = ""
-    if 'previous_uploaded_file_name_tab1' not in st.session_state:
-        st.session_state['previous_uploaded_file_name_tab1'] = None
-    if 'previous_input_path_tab1' not in st.session_state:
-        st.session_state['previous_input_path_tab1'] = None
-    
+    initialize_tab1()
     resnet = load_resnet_model()
     preprocess = get_preprocess_transforms()
 
