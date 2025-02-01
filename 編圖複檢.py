@@ -409,20 +409,26 @@ def tab2():
     
             # 不使用完整檔名時，需依序重新命名檔名後面的序號
             if not use_full_filename:
+                # 修改排序邏輯：使用使用者輸入的數值進行排序（若為純數字則轉成整數比對）
+                def sort_key(item):
+                    text = item[1]['text'].strip()
+                    if text.isdigit():
+                        return (0, int(text))
+                    return (1, text)
+    
                 sorted_files = sorted(
-                    temp_filename_changes.items(),
-                    key=lambda x: x[1]['new_filename']
+                    ((file, data) for file, data in temp_filename_changes.items() if data['new_filename'] != ''),
+                    key=sort_key
                 )
                 rename_counter = 1
                 for file, data in sorted_files:
-                    if data['new_filename'] != '':
-                        new_index = str(rename_counter).zfill(2)
-                        extension = os.path.splitext(file)[1]
-                        new_filename = f"{prefix}{new_index}{extension}"
+                    new_index = str(rename_counter).zfill(2)
+                    extension = os.path.splitext(file)[1]
+                    new_filename = f"{prefix}{new_index}{extension}"
     
-                        temp_filename_changes[file]['new_filename'] = new_filename
-                        temp_filename_changes[file]['text'] = new_index
-                        rename_counter += 1
+                    temp_filename_changes[file]['new_filename'] = new_filename
+                    temp_filename_changes[file]['text'] = new_index
+                    rename_counter += 1
     
             # 更新 session_state
             if selected_folder not in st.session_state['filename_changes']:
