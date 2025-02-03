@@ -1,4 +1,3 @@
-#%% 導入區
 import streamlit as st
 import os
 import faiss  
