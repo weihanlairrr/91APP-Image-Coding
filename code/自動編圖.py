@@ -657,7 +657,7 @@ def tab1():
             if os.path.exists("temp.zip") and os.path.isfile("temp.zip"):
                 os.remove("temp.zip")
 
-            with st.spinner("讀取檔案中，請稍候..."):
+            with st.spinner("  讀取檔案中，請稍候..."):
                 if uploaded_zip:
                     with open("temp.zip", "wb") as f:
                         f.write(uploaded_zip.getbuffer())
@@ -824,6 +824,7 @@ def tab1():
                     st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
                     continue
 
+#%%
                 # 根據商品分類規則檢查
                 for category, rule in category_rules.items():
                     if category in features_by_category[selected_brand]:
@@ -876,6 +877,7 @@ def tab1():
                 final_results = {}
                 rule_flags = [False for _ in angle_banning_rules]
 
+#%%
                 # Special angle 先處理
                 for img_data in folder_features:
                     image_file = img_data["image_file"]
@@ -981,6 +983,7 @@ def tab1():
                                 os.makedirs(os.path.dirname(new_image_path), exist_ok=True)
                                 os.rename(old_image_path, new_image_path)
 
+#%%
                 # 下面處理非 special images
                 non_special_images = [x for x in folder_features if not x["special_angles"]]
                 if not special_mappings:
@@ -1130,6 +1133,7 @@ def tab1():
                 processed_folders += 1
                 progress_bar.progress(processed_folders / total_folders)
 
+#%%
             progress_bar.empty()
             progress_text.empty()
 
@@ -1139,7 +1143,8 @@ def tab1():
             result_df = result_df[result_df['編號'].notna() | (result_df['編號'] == '超過上限')]
             if "最終前綴" in result_df.columns:
                 result_df = result_df.drop(columns=["最終前綴"])
-
+            
+            st.write("\n")
             st.dataframe(result_df, hide_index=True, use_container_width=True)
 
             # 計算張數與廣告圖
