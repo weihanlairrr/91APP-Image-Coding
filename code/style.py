@@ -20,7 +20,7 @@ div.stTextInput > label {
     display: none;
 }   
 div.block-container {
-    padding-top: 2rem;
+    padding-top: 1.8rem;
 }
 .stButton > button, [data-testid="stFormSubmitButton"] > button {
     padding: 5px 30px;
