@@ -201,7 +201,6 @@ def tab2():
         draw.text((x, y), label_text, font=font, fill="red")
         return image
     
-    
     @functools.lru_cache(maxsize=128)
     def load_and_process_image(image_path, add_label=False):
         """
@@ -248,6 +247,26 @@ def tab2():
         image = ImageOps.pad(image, (1000, 1000), method=Image.Resampling.LANCZOS)
         return image
     
+    # 修改後的排序邏輯：若檔名中包含數字，則以數字大小為主要排序依據
+    def get_sort_key(image_file):
+        """
+        取得排序用 key，若該檔案在 filename_changes 中有新檔名則使用新檔名做排序，
+        否則使用原檔名。
+        若檔名中含有數字，則優先以數字大小排序，若無則採用字母順序。
+        """
+        filename_changes = st.session_state.get('filename_changes', {}).get(selected_folder, {})
+        if image_file in filename_changes:
+            new_filename = filename_changes[image_file]['new_filename']
+            filename = new_filename if new_filename else image_file
+        else:
+            filename = image_file
+        # 利用正規表示式尋找檔名中的第一組數字
+        match = re.search(r'(\d+)', filename)
+        if match:
+            num = int(match.group(1))
+            return (0, num, filename)
+        else:
+            return (1, filename)
     
     def handle_file_uploader_change_tab2():
         """
@@ -298,16 +317,6 @@ def tab2():
     
         # 一旦輸入了路徑，就把 file_uploader_disabled_2 設為 True
         st.session_state.file_uploader_disabled_2 = bool(text_content)
-    
-    def get_sort_key(image_file):
-        """
-        取得排序用 key，若該檔案在 filename_changes 中有新檔名則使用新檔名做排序，否則使用原檔名。
-        """
-        filename_changes = st.session_state.get('filename_changes', {}).get(selected_folder, {})
-        if image_file in filename_changes:
-            new_filename = filename_changes[image_file]['new_filename']
-            return new_filename if new_filename else image_file
-        return image_file
     
     def handle_submission(selected_folder, images_to_display, outer_images_to_display, use_full_filename, folder_to_data):
         """
@@ -737,6 +746,7 @@ def tab2():
                 st.session_state['last_text_inputs'] = {}
 
             previous_folder = st.session_state['previous_selected_folder']
+
             selected_folder = st.pills(
                 "選擇一個資料夾",
                 top_level_folders,
@@ -758,7 +768,6 @@ def tab2():
                         st.session_state[key] = value
 
             st.session_state['previous_selected_folder'] = selected_folder
-            st.write("\n")
 
             if selected_folder is None:
                 st.stop()
