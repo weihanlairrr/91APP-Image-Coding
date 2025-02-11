@@ -657,7 +657,7 @@ def tab1():
             if os.path.exists("temp.zip") and os.path.isfile("temp.zip"):
                 os.remove("temp.zip")
 
-            with st.spinner("  讀取檔案中，請稍候..."):
+            with st.spinner("   讀取檔案中，請稍候..."):
                 if uploaded_zip:
                     with open("temp.zip", "wb") as f:
                         f.write(uploaded_zip.getbuffer())
@@ -851,7 +851,12 @@ def tab1():
                                 img_features = img_data["features"].astype(np.float32).reshape(1, -1)
                                 img_features = l2_normalize(img_features)
                                 sims, _ = index.search(img_features, k=5)
-                                avg_similarity = np.mean(sims)
+                                sims = sims.flatten()
+                                nonzero_sims = sims[sims != 0]
+                                if len(nonzero_sims) > 0:
+                                    avg_similarity = np.mean(nonzero_sims)
+                                else:
+                                    avg_similarity = 0
                                 folder_similarities.append(avg_similarity)
 
                             category_similarities[category] = np.mean(folder_similarities)
@@ -1020,8 +1025,13 @@ def tab1():
                         temp_index.add(feats_arr)
 
                         img_feat = l2_normalize(img_data["features"].astype(np.float32).reshape(1, -1))
-                        sims, _ = temp_index.search(img_feat, k=1)
-                        sim_percent = sims[0][0] * 100
+                        sims, _ = temp_index.search(img_feat, k=5)
+                        sims = sims.flatten()
+                        nonzero_sims = sims[sims != 0]
+                        if len(nonzero_sims) > 0:
+                            sim_percent = np.mean(nonzero_sims) * 100
+                        else:
+                            sim_percent = 0
 
                         angles_sim_list.append({
                             "image_file": image_file,
@@ -1144,7 +1154,6 @@ def tab1():
             if "最終前綴" in result_df.columns:
                 result_df = result_df.drop(columns=["最終前綴"])
             
-            st.write("\n")
             st.dataframe(result_df, hide_index=True, use_container_width=True)
 
             # 計算張數與廣告圖
@@ -1180,6 +1189,10 @@ def tab1():
             if uploaded_zip:
                 uploaded_zip_name = os.path.splitext(uploaded_zip.name)[0]
                 download_file_name = f"{uploaded_zip_name}_結果.zip"
+            elif input_path:
+                # 取得 input_path 最後一層的名稱（排除尾端斜線）
+                last_folder_name = os.path.basename(os.path.normpath(input_path))
+                download_file_name = f"{last_folder_name}_結果.zip"
             else:
                 download_file_name = "結果.zip"
 
