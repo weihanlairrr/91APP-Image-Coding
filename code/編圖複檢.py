@@ -201,7 +201,7 @@ def tab2():
         draw.text((x, y), label_text, font=font, fill="red")
         return image
     
-    @functools.lru_cache(maxsize=128)
+    @functools.lru_cache(maxsize=256)
     def load_and_process_image(image_path, add_label=False):
         """
         加載並處理圖片，支持 PSD 格式。
