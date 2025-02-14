@@ -1087,10 +1087,10 @@ def tab2():
                             else:
                                 download_file_name = "結果_已複檢.zip"
                             col1_, col2_ = st.columns([2.7, 1], vertical_alignment="center")
-                            if st.session_state.get("input_path_from_tab1"):
-                                cover_text_default = st.session_state.get("input_path_from_tab1")
-                            elif not uploaded_file_2 and input_path_2:
+                            if not uploaded_file_2 and input_path_2:
                                 cover_text_default = input_path_2.strip()
+                            elif st.session_state.get("input_path_from_tab1"):
+                                cover_text_default = st.session_state.get("input_path_from_tab1")
                             else:
                                 cover_text_default = ""
                             global cover_path_input
