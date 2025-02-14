@@ -1,18 +1,18 @@
 custom_css = """
 <style>
 section.stMain {
-    padding-left: 12%; 
-    padding-right: 12%;
+    padding-left: 10%; 
+    padding-right: 10%;
 }
 @media (min-width: 1900px) {
     section.stMain {
-        padding-left: 19%;
-        padding-right: 19%;
+        padding-left: 16%;
+        padding-right: 16%;
     }
 }
 @media (max-width: 1400px) {
     section.stMain {
-        padding-left: 8%;
+        padding-left: %;
         padding-right: 8%;
     }
 }
@@ -20,7 +20,7 @@ div.stTextInput > label {
     display: none;
 }   
 div.block-container {
-    padding-top: 1.8rem;
+    padding-top: 2rem;
 }
 .stButton > button, [data-testid="stFormSubmitButton"] > button {
     padding: 5px 30px;
@@ -67,55 +67,81 @@ header[data-testid="stHeader"] {
 [data-testid="stFileUploader"] [data-testid='stBaseButton-secondary'] {
   text-indent: -9999px;
   line-height: 0;
+  margin-top: -10px !important;
+  margin-bottom: -10px !important;
 }
-
 [data-testid="stFileUploader"] [data-testid='stBaseButton-secondary']::after {
-  line-height: initial;
-  content: "瀏覽檔案";
-  text-indent: 0;
-  font-size: 15px;
+    line-height: initial;
+    content: "瀏覽檔案";
+    text-indent: 0;
+    font-size: 15px;
 }
-
+/* Drag and Drop File Here*/
 [data-testid='stFileUploaderDropzoneInstructions'] > div > span {
   display: none;
 }
+/* file uploader 外框*/
+[data-testid='stFileUploader'] section > input + div {
+   height: 37px;
+ }
 [data-testid='stFileUploaderDropzoneInstructions'] > div::before {
   content: '上傳 ZIP 檔';
   font-size: 15px;
-  margin-bottom: 3px; 
+  margin-left: 8px !important;  
 }
+/* 上傳後的檔案圖示 hover*/
 .eyeqlp53.st-emotion-cache-1b2ybts.ex0cdmw0 {
-    width: 17px !important; 
-    height: 17px !important;
+    width: 18px !important; 
+    height: 18px !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
+/* 上傳後的檔案叉叉*/
 .st-emotion-cache-clky9d {
     width: 24px !important;
     height: 24px !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
+/* 上傳後的檔案名稱文字 */
 .stFileUploaderFileName {
     font-size: 15px !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
+/* 淺色檔案大小文字 */
 .st-emotion-cache-1aehpvj {
-    font-size: 14px !important;
+    font-size: 13!important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
+    margin-left: 8px !important;
 }
+/* 上傳後的檔案叉叉 hover*/
 [data-testid="stFileUploaderDeleteBtn"] button {
     padding: 0px 10px !important; 
     margin-top: 0 !important;
     margin-bottom: 0 !important;
+}
+/* 上傳後的檔案名稱顯示*/
+div[data-testid="stFileUploaderFile"] {
+    margin-top: -66.5px;
+    margin-left: -3px;
+    width: 62%;
+    background: #F0F2F6;
+    border-radius: 5px;
+    position: absolute; 
+    z-index: 10;
+    position: absolute;
+    align-items: center;
 }
 /* 調整 st.divider 的上下空間 */
 [data-testid="stMarkdownContainer"] hr {
     margin-top: 6px !important;
     margin-bottom: 14px !important;
     border-width: 1px !important;
+}
+[data-testid="stTextArea"] {
+    margin-bottom: 15px; 
 }
 </style>
 """
