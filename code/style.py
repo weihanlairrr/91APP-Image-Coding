@@ -12,7 +12,7 @@ section.stMain {
 }
 @media (max-width: 1400px) {
     section.stMain {
-        padding-left: %;
+        padding-left: 8%;
         padding-right: 8%;
     }
 }
