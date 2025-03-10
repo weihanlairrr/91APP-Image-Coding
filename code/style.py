@@ -6,8 +6,8 @@ section.stMain {
 }
 @media (min-width: 1900px) {
     section.stMain {
-        padding-left: 16%;
-        padding-right: 16%;
+        padding-left: 14%;
+        padding-right: 14%;
     }
 }
 @media (max-width: 1400px) {
@@ -108,6 +108,7 @@ header[data-testid="stHeader"] {
     font-size: 15px !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
+    width: 64%;
 }
 /* 淺色檔案大小文字 */
 .st-emotion-cache-1aehpvj {
