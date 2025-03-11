@@ -1281,7 +1281,6 @@ def tab2():
                             st.session_state["tmp_dir"] = tmp_dir_for_others
                             image_folder = "2-IMG" if os.path.exists(os.path.join(tmpdirname, "2-IMG")) else os.path.join("1-Main", "All")
                             setup_temporary_directory(tmpdirname, tmp_dir_for_others, image_folder)
-                            st.write(st.session_state['filename_changes'][selected_folder])
 
                             zip_buffer = parallel_read_zip_compress()
                             st.session_state["final_zip_content"] = zip_buffer.getvalue()
