@@ -6,8 +6,8 @@ section.stMain {
 }
 @media (min-width: 1900px) {
     section.stMain {
-        padding-left: 14%;
-        padding-right: 14%;
+        padding-left: 18%;
+        padding-right: 18%;
     }
 }
 @media (max-width: 1400px) {
