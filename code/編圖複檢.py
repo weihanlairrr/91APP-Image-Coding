@@ -414,7 +414,7 @@ def tab2():
             st.session_state[text_input_key] = data['text']
         if num_images_key in st.session_state:
             current_num_images = int(st.session_state[num_images_key])
-            st.session_state[num_images_key] = str(max(1, current_num_images - removed_image_count + modified_outer_count + added_image_count))
+            st.session_state[num_images_key] = str(max(0, current_num_images - removed_image_count + modified_outer_count + added_image_count))
         ad_images_key = f"{selected_folder}_ad_images"
         ad_images_value = st.session_state.get(ad_images_key)
         model_images_key = f"{selected_folder}_model_images"
@@ -549,50 +549,6 @@ def tab2():
             current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
             temp_filename_changes[image_file] = {'new_filename': new_filename, 'text': new_text}
     
-        outer_moved_count = 0
-        for outer_image_file in outer_images_to_display:
-            text_input_key = f"outer_{selected_folder}_{outer_image_file}"
-            new_text = st.session_state.get(text_input_key, "")
-            extension = os.path.splitext(outer_image_file)[1]
-    
-            if (selected_folder in st.session_state.get('filename_changes', {}) and 
-                outer_image_file in st.session_state['filename_changes'][selected_folder]):
-                default_text = st.session_state['filename_changes'][selected_folder][outer_image_file]['text']
-            else:
-                default_text = os.path.splitext(os.path.basename(outer_image_file))[0]
-    
-            if new_text.strip() == '':
-                original_title = st.session_state['image_original_title'][selected_folder].get(outer_image_file, "無")
-                if (original_title != "無") and (default_text != original_title):
-                    new_text = original_title
-                    new_filename = original_title + extension
-                    removed_image_count += 1
-                    label_ = st.session_state['image_labels'][selected_folder].get(outer_image_file, "無")
-                    if label_ == "模特":
-                        removed_model_count += 1
-                    elif label_ == "平拍":
-                        removed_flat_count += 1
-                else:
-                    new_text = default_text
-                    new_filename = default_text + extension
-            else:
-                if new_text.strip() != default_text:
-                    original_title = st.session_state['image_original_title'][selected_folder].get(outer_image_file, "無")
-                    if default_text == original_title:
-                        outer_moved_count += 1
-                        added_image_count += 1
-                        label_ = st.session_state['image_labels'][selected_folder].get(outer_image_file, "無")
-                        if label_ == "模特":
-                            added_model_count += 1
-                        elif label_ == "平拍":
-                            added_flat_count += 1
-                new_filename = new_text + extension
-    
-            if new_text.strip() != default_text:
-                temp_filename_changes[outer_image_file] = {'new_filename': new_filename, 'text': new_text}
-                if new_filename != '':
-                    modified_outer_count += 1
-    
         new_filenames = [
             data['new_filename'] for data in temp_filename_changes.values() if data['new_filename'] != ''
         ]
@@ -614,7 +570,7 @@ def tab2():
             if num_images_key in st.session_state:
                 current_num_images = int(st.session_state[num_images_key])
                 st.session_state[num_images_key] = str(
-                    max(1, current_num_images - removed_image_count + modified_outer_count + added_image_count - outer_moved_count)
+                    max(0, current_num_images - removed_image_count + modified_outer_count + added_image_count)
                 )
             current_model = int(st.session_state.get(model_images_key, 0))
             current_flat = int(st.session_state.get(flat_images_key, 0))
