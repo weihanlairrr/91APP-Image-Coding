@@ -60,6 +60,7 @@ def tab2():
             'previous_input_path': None,
             'file_uploader_disabled_2': False,
             'text_area_disabled_2': False,
+            'input_path_from_tab1': "",
             "custom_tmpdir": fixed_custom_tmpdir,
             'previous_selected_folder': None,
             'final_zip_content': None,
@@ -70,26 +71,23 @@ def tab2():
         for key, value in defaults.items():
             st.session_state.setdefault(key, value)
 
-    def reinitialize_tab2_state():
-        keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2', 'custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'image_original_title', 'image_labels']
-        for key in keys:
-            if key in st.session_state:
-                del st.session_state[key]
-        for key in list(st.session_state.keys()):
-            if key.startswith("prev_"):
-                del st.session_state[key]
-        initialize_tab2()
-        
     def clear_all_caches():
         shutil.rmtree(fixed_cache_base_dir, ignore_errors=True)
         os.makedirs(fixed_psd_cache_dir, exist_ok=True)
         os.makedirs(fixed_ai_cache_dir, exist_ok=True)
         os.makedirs(fixed_custom_tmpdir, exist_ok=True)
+
+    def reinitialize_tab2_state():
+        keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2', 'input_path_from_tab1', 'custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'image_original_title', 'image_labels']
+        for key in keys:
+            if key in st.session_state:
+                del st.session_state[key]
+        # 清除所有以 "prev_" 開頭的狀態變數
         for key in list(st.session_state.keys()):
             if key.startswith("prev_"):
                 del st.session_state[key]
         initialize_tab2()
-        
+
     def handle_file_uploader_change_tab2():
         reinitialize_tab2_state()
         clear_all_caches()
@@ -548,6 +546,7 @@ def tab2():
     
             current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
             temp_filename_changes[image_file] = {'new_filename': new_filename, 'text': new_text}
+
     
         new_filenames = [
             data['new_filename'] for data in temp_filename_changes.values() if data['new_filename'] != ''
@@ -1234,7 +1233,6 @@ def tab2():
                         if st.session_state.get('has_duplicates'):
                             colB.warning(f"檔名重複: {', '.join(st.session_state['duplicate_filenames'])}")
                     if st.checkbox("所有資料夾均確認完成"):
-                        st.write("\n")
                         with st.spinner('檔案處理中...'):
                             tmp_dir_for_others = os.path.join(tmpdirname, "tmp_others")
                             st.session_state["tmp_dir"] = tmp_dir_for_others
@@ -1250,7 +1248,7 @@ def tab2():
                                 download_file_name = f"{folder_name}__已複檢.zip"
                             else:
                                 download_file_name = "結果_已複檢.zip"
-                            col1_, col2_,col3_ = st.columns([3,0.15,1.5],vertical_alignment="center")
+                            col1_, col2_, col3_, col4_ = st.columns([1.25,3.2,0.1,0.95],vertical_alignment="center")
                             if not uploaded_file_2 and input_path_2:
                                 cover_text_default = input_path_2.strip()
                             elif st.session_state.get("input_path_from_tab1"):
@@ -1259,12 +1257,13 @@ def tab2():
                                 cover_text_default = ""
                             global cover_path_input
                             
-                            cover_path_input = col1_.text_input(
-                                label="下載的同時覆蓋此路徑",
+                            col1_.write("同步覆蓋此路徑的檔案(選填)")
+                            cover_path_input = col2_.text_input(
+                                label="同步覆蓋此路徑的檔案",
                                 value=cover_text_default, 
                             )
-                            col3_.download_button(
-                                label='下載 + 覆蓋(選填)',
+                            col4_.download_button(
+                                label='下載修改後的檔案',
                                 data=cleaned_zip_buffer,
                                 file_name=download_file_name,
                                 mime='application/zip',
