@@ -16,8 +16,22 @@ from io import BytesIO
 from PIL import Image, UnidentifiedImageError, ImageCms
 import concurrent.futures
 import subprocess
+import stat
 
 def tab1():
+    # 定義 onerror 處理函式，嘗試移除唯讀屬性後重試刪除
+    def on_rm_error(func, path, exc_info):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+        
+    # 定義刪除檔案的輔助函式
+    def remove_file(path):
+        try:
+            os.remove(path)
+        except PermissionError:
+            os.chmod(path, stat.S_IWRITE)
+            os.remove(path)
+    
     # 設定 Faiss 執行緒數量
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
     faiss.omp_set_num_threads(min(32, (os.cpu_count() or 1) + 4))
@@ -53,7 +67,7 @@ def tab1():
 
     def copytree_multithreaded(src, dst):
         if os.path.exists(dst):
-            shutil.rmtree(dst)
+            shutil.rmtree(dst, onerror=on_rm_error)
         os.makedirs(dst, exist_ok=True)
         try:
             if os.name == 'nt':
@@ -195,9 +209,9 @@ def tab1():
             current_filename = uploaded_file_1.name
             if current_filename != st.session_state.get('previous_uploaded_file_name_tab1', None):
                 if os.path.exists("uploaded_images"):
-                    shutil.rmtree("uploaded_images")
+                    shutil.rmtree("uploaded_images", onerror=on_rm_error)
                 if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
-                    shutil.rmtree(st.session_state["custom_tmpdir"], ignore_errors=True)
+                    shutil.rmtree(st.session_state["custom_tmpdir"], onerror=on_rm_error)
                 st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
                 st.session_state['previous_uploaded_file_name_tab1'] = current_filename
         st.session_state.text_area_disabled_1 = bool(uploaded_file_1)
@@ -207,9 +221,9 @@ def tab1():
         text_content = st.session_state.get(text_key, "").strip()
         if text_content != st.session_state.get('previous_input_path_tab1', None):
             if os.path.exists("uploaded_images"):
-                shutil.rmtree("uploaded_images")
+                shutil.rmtree("uploaded_images", onerror=on_rm_error)
             if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
-                shutil.rmtree(st.session_state["custom_tmpdir"], ignore_errors=True)
+                shutil.rmtree(st.session_state["custom_tmpdir"], onerror=on_rm_error)
             st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
             st.session_state['previous_input_path_tab1'] = text_content
         if text_content.startswith("search-ms:"):
@@ -658,9 +672,9 @@ def tab1():
             original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
 
             if os.path.exists("uploaded_images") and os.path.isdir("uploaded_images"):
-                shutil.rmtree("uploaded_images")
+                shutil.rmtree("uploaded_images", onerror=on_rm_error)
             if os.path.exists("temp.zip") and os.path.isfile("temp.zip"):
-                os.remove("temp.zip")
+                remove_file("temp.zip")
             with st.spinner("   讀取檔案中，請稍候..."):
                 if uploaded_zip:
                     with open("temp.zip", "wb") as f:
@@ -711,6 +725,7 @@ def tab1():
                 if os.path.isdir(os.path.join("uploaded_images", f))
                 and not f.startswith('__MACOSX')
                 and not f.startswith('.')
+                and f != "0-上架資料"
             ]
             results = []
             skipped_images = []
@@ -728,7 +743,7 @@ def tab1():
                 if not image_files:
                     if folder != "0-上架資料":
                         st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
-                    shutil.rmtree(folder_path)
+                    shutil.rmtree(folder_path, onerror=on_rm_error)
                     processed_folders += 1
                     progress_bar.progress(processed_folders / total_folders)
                     continue
@@ -788,7 +803,7 @@ def tab1():
                 if len(folder_features) == 0:
                     if folder != "0-上架資料":
                         st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
-                    shutil.rmtree(folder_path)
+                    shutil.rmtree(folder_path, onerror=on_rm_error)
                     processed_folders += 1
                     progress_bar.progress(processed_folders / total_folders)
                     continue
@@ -824,7 +839,7 @@ def tab1():
                         best_category = {'brand': selected_brand, 'category': best_category_name}
                     else:
                         st.warning(f"資料夾 {folder} 無法匹配任何分類，跳過此資料夾")
-                        shutil.rmtree(folder_path)
+                        shutil.rmtree(folder_path, onerror=on_rm_error)
                         processed_folders += 1
                         progress_bar.progress(processed_folders / total_folders)
                         continue
@@ -1160,9 +1175,9 @@ def tab1():
                 download_file_name = f"{last_folder_name}_結果.zip"
             else:
                 download_file_name = "結果.zip"
-            shutil.rmtree("uploaded_images")
+            shutil.rmtree("uploaded_images", onerror=on_rm_error)
             if uploaded_zip:
-                os.remove("temp.zip")
+                remove_file("temp.zip")
             if st.download_button(
                 label="下載編圖結果",
                 data=zip_data,
