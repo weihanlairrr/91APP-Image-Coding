@@ -60,7 +60,6 @@ def tab2():
             'previous_input_path': None,
             'file_uploader_disabled_2': False,
             'text_area_disabled_2': False,
-            'input_path_from_tab1': "",
             "custom_tmpdir": fixed_custom_tmpdir,
             'previous_selected_folder': None,
             'final_zip_content': None,
@@ -78,7 +77,7 @@ def tab2():
         os.makedirs(fixed_custom_tmpdir, exist_ok=True)
 
     def reinitialize_tab2_state():
-        keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2', 'input_path_from_tab1', 'custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'image_original_title', 'image_labels']
+        keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2', 'custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'image_original_title', 'image_labels']
         for key in keys:
             if key in st.session_state:
                 del st.session_state[key]
@@ -1233,6 +1232,7 @@ def tab2():
                         if st.session_state.get('has_duplicates'):
                             colB.warning(f"檔名重複: {', '.join(st.session_state['duplicate_filenames'])}")
                     if st.checkbox("所有資料夾均確認完成"):
+                        st.write("\n")
                         with st.spinner('檔案處理中...'):
                             tmp_dir_for_others = os.path.join(tmpdirname, "tmp_others")
                             st.session_state["tmp_dir"] = tmp_dir_for_others
@@ -1248,7 +1248,7 @@ def tab2():
                                 download_file_name = f"{folder_name}__已複檢.zip"
                             else:
                                 download_file_name = "結果_已複檢.zip"
-                            col1_, col2_, col3_, col4_ = st.columns([1.25,3.2,0.1,0.95],vertical_alignment="center")
+                            col1_, col2_, col3_ = st.columns([4,0.1,2],vertical_alignment="center")
                             if not uploaded_file_2 and input_path_2:
                                 cover_text_default = input_path_2.strip()
                             elif st.session_state.get("input_path_from_tab1"):
@@ -1257,13 +1257,13 @@ def tab2():
                                 cover_text_default = ""
                             global cover_path_input
                             
-                            col1_.write("同步覆蓋此路徑的檔案(選填)")
-                            cover_path_input = col2_.text_input(
+                            cover_path_input = col1_.text_input(
                                 label="同步覆蓋此路徑的檔案",
+                                placeholder="同步覆蓋此路徑的檔案",
                                 value=cover_text_default, 
                             )
-                            col4_.download_button(
-                                label='下載修改後的檔案',
+                            col3_.download_button(
+                                label='下載 + 覆蓋(選填)',
                                 data=cleaned_zip_buffer,
                                 file_name=download_file_name,
                                 mime='application/zip',
