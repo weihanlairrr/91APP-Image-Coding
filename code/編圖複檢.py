@@ -8,8 +8,10 @@ import tempfile
 import functools
 import imagecodecs
 import ctypes
+import time
 import subprocess
 import sys
+import stat
 import concurrent.futures
 import fitz
 from io import BytesIO
@@ -19,31 +21,34 @@ from PIL import Image, ImageOps, ImageDraw, ImageFont, UnidentifiedImageError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def tab2():
-    def copytree_multithreaded(src, dst):
-        if os.path.exists(dst):
-            shutil.rmtree(dst)
-        os.makedirs(dst, exist_ok=True)
-        try:
-            if os.name == 'nt':
-                cmd = ['robocopy', src, dst, '/MIR', '/MT:20', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS']
-                subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                cmd = ['rsync', '-a', src + '/', dst + '/']
-                subprocess.run(cmd)
-        except Exception:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
-                futures = []
-                for root, dirs, files in os.walk(src):
-                    rel_path = os.path.relpath(root, src)
-                    dst_dir = os.path.join(dst, rel_path) if rel_path != '.' else dst
-                    os.makedirs(dst_dir, exist_ok=True)
-                    for file in files:
-                        src_file = os.path.join(root, file)
-                        dst_file = os.path.join(dst_dir, file)
-                        futures.append(executor.submit(shutil.copy2, src_file, dst_file))
-                concurrent.futures.wait(futures)
+    def on_rm_error(func, path, exc_info):
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
 
-    def initialize_tab2():
+    def initialize_tab2(mode="default"):
+        """
+        mode 可選擇：
+          - "default": 僅執行預設初始化（僅設定預設值，若 session_state 中無該鍵則設定）
+          - "clear_cache": 僅清除暫存資料夾（cache）
+          - "reinitialize": 僅重置 session_state 的狀態（清除指定的鍵與以 "prev_" 開頭的鍵）
+          - "both": 同時執行重置與清除暫存，再執行預設初始化
+        """
+        if mode in ("clear_cache", "both"):
+            if os.path.exists(fixed_cache_base_dir):
+                shutil.rmtree(fixed_cache_base_dir, ignore_errors=False, onerror=on_rm_error)
+            os.makedirs(fixed_cache_base_dir, exist_ok=True)
+            os.makedirs(fixed_psd_cache_dir, exist_ok=True)
+            os.makedirs(fixed_ai_cache_dir, exist_ok=True)
+            os.makedirs(fixed_custom_tmpdir, exist_ok=True)
+        if mode in ("reinitialize", "both"):
+            keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2','custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'image_original_title', 'image_labels']
+            for key in keys:
+                if key in st.session_state:
+                    del st.session_state[key]
+            # 清除所有以 "prev_" 開頭的狀態變數
+            for key in list(st.session_state.keys()):
+                if key.startswith("prev_"):
+                    del st.session_state[key]
         defaults = {
             'filename_changes': {},
             'image_cache': {},
@@ -70,26 +75,32 @@ def tab2():
         for key, value in defaults.items():
             st.session_state.setdefault(key, value)
 
-    def clear_all_caches():
-        shutil.rmtree(fixed_cache_base_dir, ignore_errors=True)
-        os.makedirs(fixed_psd_cache_dir, exist_ok=True)
-        os.makedirs(fixed_ai_cache_dir, exist_ok=True)
-        os.makedirs(fixed_custom_tmpdir, exist_ok=True)
-
-    def reinitialize_tab2_state():
-        keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2', 'custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'image_original_title', 'image_labels']
-        for key in keys:
-            if key in st.session_state:
-                del st.session_state[key]
-        # 清除所有以 "prev_" 開頭的狀態變數
-        for key in list(st.session_state.keys()):
-            if key.startswith("prev_"):
-                del st.session_state[key]
-        initialize_tab2()
+    def copytree_multithreaded(src, dst):
+        if os.path.exists(dst):
+            shutil.rmtree(dst)
+        os.makedirs(dst, exist_ok=True)
+        try:
+            if os.name == 'nt':
+                cmd = ['robocopy', src, dst, '/MIR', '/MT:20', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS']
+                subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                cmd = ['rsync', '-a', src + '/', dst + '/']
+                subprocess.run(cmd)
+        except Exception:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
+                futures = []
+                for root, dirs, files in os.walk(src):
+                    rel_path = os.path.relpath(root, src)
+                    dst_dir = os.path.join(dst, rel_path) if rel_path != '.' else dst
+                    os.makedirs(dst_dir, exist_ok=True)
+                    for file in files:
+                        src_file = os.path.join(root, file)
+                        dst_file = os.path.join(dst_dir, file)
+                        futures.append(executor.submit(shutil.copy2, src_file, dst_file))
+                concurrent.futures.wait(futures)
 
     def handle_file_uploader_change_tab2():
-        reinitialize_tab2_state()
-        clear_all_caches()
+        initialize_tab2(mode="both")
         st.session_state["custom_tmpdir"] = fixed_custom_tmpdir
         file_key = 'file_uploader_' + str(st.session_state.get('file_uploader_key2', 0))
         uploaded_file_1 = st.session_state.get(file_key, None)
@@ -103,8 +114,7 @@ def tab2():
         st.session_state.text_area_disabled_2 = bool(uploaded_file_1)
 
     def handle_text_area_change_tab2():
-        reinitialize_tab2_state()
-        clear_all_caches()
+        initialize_tab2(mode="both")
         st.session_state["custom_tmpdir"] = fixed_custom_tmpdir
         text_key = 'text_area_' + str(st.session_state.get('text_area_key2', 0))
         text_content = st.session_state.get(text_key, "").strip()
@@ -545,7 +555,6 @@ def tab2():
     
             current_filenames[image_file] = {'new_filename': new_filename, 'text': new_text}
             temp_filename_changes[image_file] = {'new_filename': new_filename, 'text': new_text}
-
     
         new_filenames = [
             data['new_filename'] for data in temp_filename_changes.values() if data['new_filename'] != ''
@@ -801,66 +810,54 @@ def tab2():
         return cleaned_zip_buffer
 
     def cover_path_and_reset_key_tab2():
+        
+        def fast_copy_filtered(src, dst):
+            file_list = []
+            for root, dirs, files in os.walk(src):
+                rel_path = os.path.relpath(root, src)
+                target_dir = os.path.join(dst, rel_path)
+                os.makedirs(target_dir, exist_ok=True)
+                for file in files:
+                    if file.lower().endswith('.gsheet'):
+                        continue
+                    src_file = os.path.join(root, file)
+                    dst_file = os.path.join(target_dir, file)
+                    file_list.append((src_file, dst_file))
+            with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
+                futures = [executor.submit(shutil.copy2, src_file, dst_file) for src_file, dst_file in file_list]
+                for future in as_completed(futures):
+                    future.result()
+                    
         if cover_path_input.strip():
-            tmp_dir_path = st.session_state.get("custom_tmpdir")
-            if tmp_dir_path:
-                tmp_others_path = os.path.join(tmp_dir_path, "tmp_others")
-                if os.path.exists(tmp_others_path):
-                    shutil.rmtree(tmp_others_path, ignore_errors=True)
-            def delete_file(file_path, file, ext):
-                try:
-                    if ('編圖結果' in file.lower() and file.lower().endswith('.xlsx')):
-                        os.remove(file_path)
-                    elif ext not in [".xlsx", ".gsheet", ".ai"]:
+            first_level_items = os.listdir(cover_path_input)
+            for item in first_level_items:
+                item_path = os.path.join(cover_path_input, item)
+
+                if os.path.isdir(item_path):
+                    if item != "0-上架資料":
                         try:
-                            os.remove(file_path)
+                            shutil.rmtree(item_path, onerror=lambda f, p, e: (
+                                os.chmod(p, stat.S_IWRITE),
+                                f(p)
+                            ))
+                        except Exception:
+                            pass
+                elif os.path.isfile(item_path):
+                    if not item.lower().endswith('.gsheet'):
+                        try:
+                            os.chmod(item_path, stat.S_IWRITE)
+                            os.remove(item_path)
                         except PermissionError:
                             try:
                                 if os.name == 'nt':
-                                    ctypes.windll.kernel32.SetFileAttributesW(file_path, 0x80)
-                                    os.remove(file_path)
-                                else:
-                                    os.remove(file_path)
-                            except PermissionError:
-                                try:
-                                    if os.name == 'nt':
-                                        command = f'handle.exe "{file_path}"'
-                                        output = subprocess.check_output(command, shell=True, text=True)
-                                        for line in output.splitlines():
-                                            if "pid:" in line.lower():
-                                                pid = int(line.split("pid:")[1].split()[0])
-                                                os.system(f"taskkill /PID {pid} /F")
-                                    else:
-                                        command = f'lsof | grep "{file_path}"'
-                                        output = subprocess.check_output(command, shell=True, text=True)
-                                        for line in output.splitlines():
-                                            pid = int(line.split()[1])
-                                            os.kill(pid, 9)
-                                    os.remove(file_path)
-                                except Exception as e:
-                                    st.warning(f"無法刪除檔案: {file_path}，錯誤: {str(e)}")
-                except PermissionError as e:
-                    st.warning(f"無法刪除檔案: {file_path}，錯誤: {str(e)}")
-            file_delete_tasks = []
-            with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
-                for root, dirs, files in os.walk(cover_path_input, topdown=False):
-                    for file in files:
-                        ext = os.path.splitext(file)[1].lower()
-                        file_path = os.path.join(root, file)
-                        if ('編圖結果' in file.lower() and file.lower().endswith('.xlsx')) or ext not in [".xlsx", ".gsheet", ".ai"]:
-                            file_delete_tasks.append(executor.submit(delete_file, file_path, file, ext))
-                for future in as_completed(file_delete_tasks):
-                    future.result()
-            dir_delete_tasks = []
-            with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
-                for root, dirs, files in os.walk(cover_path_input, topdown=False):
-                    for d in dirs:
-                        if d == "0-上架資料":
-                            continue
-                        dir_path = os.path.join(root, d)
-                        dir_delete_tasks.append(executor.submit(shutil.rmtree, dir_path, ignore_errors=True))
-                for future in as_completed(dir_delete_tasks):
-                    future.result()
+                                    ctypes.windll.kernel32.SetFileAttributesW(item_path, 0x80)
+                                os.remove(item_path)
+                            except Exception:
+                                pass
+                        except Exception:
+                            pass
+
+            time.sleep(1)
             if "final_zip_content" in st.session_state and st.session_state["final_zip_content"]:
                 final_zip_bytes = st.session_state["final_zip_content"]
                 tmp_extract_dir = os.path.join(tempfile.gettempdir(), "cover_tmp")
@@ -872,28 +869,12 @@ def tab2():
                 tmp_others_extracted = os.path.join(tmp_extract_dir, "tmp_others")
                 if os.path.exists(tmp_others_extracted):
                     shutil.rmtree(tmp_others_extracted, ignore_errors=True)
-                def fast_copy_filtered(src, dst):
-                    file_list = []
-                    for root, dirs, files in os.walk(src):
-                        rel_path = os.path.relpath(root, src)
-                        target_dir = os.path.join(dst, rel_path)
-                        os.makedirs(target_dir, exist_ok=True)
-                        for file in files:
-                            ext = os.path.splitext(file)[1].lower()
-                            if ('編圖結果' in file.lower() and file.lower().endswith('.xlsx')) or ext not in [".xlsx", ".gsheet"]:
-                                src_file = os.path.join(root, file)
-                                dst_file = os.path.join(target_dir, file)
-                                file_list.append((src_file, dst_file))
-                    with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
-                        futures = [executor.submit(shutil.copy2, src_file, dst_file) for src_file, dst_file in file_list]
-                        for future in as_completed(futures):
-                            future.result()
+
                 fast_copy_filtered(tmp_extract_dir, cover_path_input)
                 shutil.rmtree(tmp_extract_dir, ignore_errors=True)
             if "tmp_dir" in st.session_state and os.path.exists(st.session_state["tmp_dir"]):
                 shutil.rmtree(st.session_state["tmp_dir"], ignore_errors=True)
-                
-        clear_all_caches()
+                    
         st.session_state['file_uploader_key2'] += 1
         st.session_state['text_area_key2'] += 1
         st.session_state['file_uploader_disabled_2'] = False
@@ -904,8 +885,8 @@ def tab2():
     fixed_psd_cache_dir = os.path.join(fixed_cache_base_dir, "psd_cache")
     fixed_ai_cache_dir = os.path.join(fixed_cache_base_dir, "ai_cache")
     fixed_custom_tmpdir = os.path.join(fixed_cache_base_dir, "custom_tmpdir")
-    
-    initialize_tab2()
+
+    initialize_tab2() 
     st.write("\n")
     col1, col2 = st.columns(2, vertical_alignment="top")
     uploaded_file_2 = col1.file_uploader(
