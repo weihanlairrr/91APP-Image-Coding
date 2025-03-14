@@ -208,10 +208,13 @@ def tab1():
         if uploaded_file_1:
             current_filename = uploaded_file_1.name
             if current_filename != st.session_state.get('previous_uploaded_file_name_tab1', None):
-                if os.path.exists("uploaded_images"):
-                    shutil.rmtree("uploaded_images", onerror=on_rm_error)
-                if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
-                    shutil.rmtree(st.session_state["custom_tmpdir"], onerror=on_rm_error)
+                try:
+                    if os.path.exists("uploaded_images"):
+                        shutil.rmtree("uploaded_images", onerror=on_rm_error)
+                    if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
+                        shutil.rmtree(st.session_state["custom_tmpdir"], onerror=on_rm_error)
+                except:
+                    pass
                 st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
                 st.session_state['previous_uploaded_file_name_tab1'] = current_filename
         st.session_state.text_area_disabled_1 = bool(uploaded_file_1)
@@ -220,10 +223,13 @@ def tab1():
         text_key = 'text_area_' + str(st.session_state.get('text_area_key1', 0))
         text_content = st.session_state.get(text_key, "").strip()
         if text_content != st.session_state.get('previous_input_path_tab1', None):
-            if os.path.exists("uploaded_images"):
-                shutil.rmtree("uploaded_images", onerror=on_rm_error)
-            if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
-                shutil.rmtree(st.session_state["custom_tmpdir"], onerror=on_rm_error)
+            try:
+                if os.path.exists("uploaded_images"):
+                    shutil.rmtree("uploaded_images", onerror=on_rm_error)
+                if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
+                    shutil.rmtree(st.session_state["custom_tmpdir"], onerror=on_rm_error)
+            except:
+                pass
             st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
             st.session_state['previous_input_path_tab1'] = text_content
         if text_content.startswith("search-ms:"):
@@ -1186,3 +1192,4 @@ def tab1():
                 on_click=reset_key_tab1
             ):
                 st.rerun()
+
