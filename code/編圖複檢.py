@@ -14,6 +14,7 @@ import sys
 import stat
 import concurrent.futures
 import fitz
+import math
 from io import BytesIO
 from psd_tools import PSDImage
 from collections import Counter, defaultdict
@@ -41,7 +42,7 @@ def tab2():
             os.makedirs(fixed_ai_cache_dir, exist_ok=True)
             os.makedirs(fixed_custom_tmpdir, exist_ok=True)
         if mode in ("reinitialize", "both"):
-            keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2','custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'image_original_title', 'image_labels']
+            keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2','custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'original_filename', 'image_labels']
             for key in keys:
                 if key in st.session_state:
                     del st.session_state[key]
@@ -69,7 +70,7 @@ def tab2():
             'previous_selected_folder': None,
             'final_zip_content': None,
             'source_loaded': False,
-            'image_original_title': {},
+            'original_filename': {},
             'image_labels': {}
         }
         for key, value in defaults.items():
@@ -284,8 +285,40 @@ def tab2():
         num = int(match.group(1)) if match else float('inf')
         return (length_priority, is_alpha, first_letter, num, base_name)
 
-    def handle_submission_1_main_all(selected_folder, images_to_display, outer_images_to_display, folder_to_data):
+    def fix_code(val):
+        if val is None or (isinstance(val, float) and math.isnan(val)):
+            return ""
+        s = str(val).strip()
+        return s
+    
+    def get_original_filename(selected_folder, image_file, df_result, mapping):
+        norm_folder = selected_folder[:-3] if selected_folder.endswith("_OK") else selected_folder
+        current_filename = os.path.splitext(os.path.basename(image_file))[0]
+        if df_result is not None:
+            key = (norm_folder, current_filename)
+            return mapping.get(key, current_filename)
+        else:
+            return current_filename
         
+    def get_image_label(folder, image_file, df, prefix_val, number_val):
+        norm_folder = folder[:-3] if folder.endswith("_OK") else folder
+        df_folder = df[df.iloc[:, 0].astype(str).str.strip() == norm_folder]
+        base_name = os.path.splitext(image_file)[0]
+        for idx, row_ in df_folder.iterrows():
+            combined = prefix_val + number_val
+            if combined == base_name:
+                description = str(row_.iloc[3])
+                return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m"]) else "平拍"
+        for idx, row_ in df_folder.iterrows():
+            original_full_filename = str(row_.iloc[1]).strip()
+            orig_filename_only = os.path.basename(original_full_filename.replace("\\", "/"))
+            orig_text = os.path.splitext(orig_filename_only)[0]
+            if base_name in orig_text:
+                description = str(row_.iloc[3])
+                return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m"]) else "平拍"
+        return "無"
+
+    def handle_submission_1_main_all(selected_folder, images_to_display, outer_images_to_display, folder_to_data):
         def sort_key(item):
             text = item[1]['text'].strip()
             if text.isdigit():
@@ -309,38 +342,10 @@ def tab2():
                 original_full_filename = str(row.iloc[1]).strip()
                 orig_filename_only = os.path.basename(original_full_filename.replace("\\", "/"))
                 orig_text = os.path.splitext(orig_filename_only)[0]
-                prefix_val = str(row.iloc[4]).strip()
-                number_val = str(row.iloc[5]).strip()
+                prefix_val = fix_code(row.iloc[4]).strip()
+                number_val = fix_code(row.iloc[5]).strip()
                 key = (folder_name, prefix_val + number_val)
                 tmp_map[key] = orig_text
-
-            def get_image_label(folder, image_file, df_result):
-                norm_folder = folder
-                if norm_folder.endswith("_OK"):
-                    norm_folder = norm_folder[:-3]
-                df_folder = df_result[df_result.iloc[:,0].astype(str).str.strip() == norm_folder]
-                base_name = os.path.splitext(image_file)[0]
-                for idx, row in df_folder.iterrows():
-                    prefix_val = str(row.iloc[4]).strip()
-                    number_val = str(row.iloc[5]).strip()
-                    combined = prefix_val + number_val
-                    if combined == base_name:
-                        description = str(row.iloc[3])
-                        if any(keyword in description for keyword in ["模特", "_9", "-0m"]):
-                            return "模特"
-                        else:
-                            return "平拍"
-                for idx, row in df_folder.iterrows():
-                    original_full_filename = str(row.iloc[1]).strip()
-                    orig_filename_only = os.path.basename(original_full_filename.replace("\\", "/"))
-                    orig_text = os.path.splitext(orig_filename_only)[0]
-                    if base_name in orig_text:
-                        description = str(row.iloc[3])
-                        if any(keyword in description for keyword in ["模特", "_9", "-0m"]):
-                            return "模特"
-                        else:
-                            return "平拍"
-                return "無"
         else:
             df_result = None
         current_filenames = {}
@@ -437,26 +442,6 @@ def tab2():
         st.session_state['modified_folders'].add(data_folder_name)
 
     def handle_submission_2_img(selected_folder, images_to_display, outer_images_to_display, folder_to_data):
-        def get_image_label(folder, image_file, df):
-            norm_folder = folder[:-3] if folder.endswith("_OK") else folder
-            df_folder = df[df.iloc[:, 0].astype(str).str.strip() == norm_folder]
-            base_name = os.path.splitext(image_file)[0]
-            for idx, row_ in df_folder.iterrows():
-                prefix_val = str(row_.iloc[4]).strip()
-                number_val = str(row_.iloc[5]).strip()
-                combined = prefix_val + number_val
-                if combined == base_name:
-                    description = str(row_.iloc[3])
-                    return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m"]) else "平拍"
-            for idx, row_ in df_folder.iterrows():
-                original_full_filename = str(row_.iloc[1]).strip()
-                orig_filename_only = os.path.basename(original_full_filename.replace("\\", "/"))
-                orig_text = os.path.splitext(orig_filename_only)[0]
-                if base_name in orig_text:
-                    description = str(row_.iloc[3])
-                    return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m"]) else "平拍"
-            return "無"
-        
         removed_image_count = 0
         modified_outer_count = 0
         added_image_count = 0
@@ -483,9 +468,9 @@ def tab2():
                         original_full_filename = str(row.iloc[1]).strip()
                         orig_filename_only = os.path.basename(original_full_filename.replace("\\", "/"))
                         orig_text = os.path.splitext(orig_filename_only)[0]
-                        prefix_val = str(row.iloc[4]).strip()
-                        number_val = str(row.iloc[5]).strip()
-                        key = (folder_name, prefix_val + number_val)
+                        prefix_val = fix_code(row.iloc[4]).strip()
+                        number_val = fix_code(row.iloc[5]).strip()
+                        key = (folder_name, number_val if prefix_val == "" else prefix_val + number_val)
                         tmp_map[key] = orig_text
                     mapping = tmp_map
                 else:
@@ -493,26 +478,20 @@ def tab2():
             except Exception:
                 df_result = None
     
-        st.session_state.setdefault('image_original_title', {})
-        st.session_state['image_original_title'].setdefault(selected_folder, {})
+        st.session_state.setdefault('original_filename', {})
+        st.session_state['original_filename'].setdefault(selected_folder, {})
         for image_file in (images_to_display + outer_images_to_display):
-            if image_file not in st.session_state['image_original_title'][selected_folder]:
-                norm_folder = selected_folder[:-3] if selected_folder.endswith("_OK") else selected_folder
-                current_filename = os.path.splitext(os.path.basename(image_file))[0]
-                if df_result is not None:
-                    key = (norm_folder, current_filename)
-                    st.session_state['image_original_title'][selected_folder][image_file] = mapping.get(key, current_filename)
-                else:
-                    st.session_state['image_original_title'][selected_folder][image_file] = current_filename
+            if image_file not in st.session_state['original_filename'][selected_folder]:
+                st.session_state['original_filename'][selected_folder][image_file] = get_original_filename(selected_folder, image_file, df_result, mapping)
     
         st.session_state.setdefault('image_labels', {})
         st.session_state['image_labels'].setdefault(selected_folder, {})
         for image_file in (images_to_display + outer_images_to_display):
             if image_file not in st.session_state['image_labels'][selected_folder]:
                 st.session_state['image_labels'][selected_folder][image_file] = (
-                    get_image_label(selected_folder, image_file, df_result) if df_result is not None else "無"
+                    get_image_label(selected_folder, image_file, df_result, prefix_val, number_val) if df_result is not None else "無"
                 )
-    
+                
         current_filenames = {}
         temp_filename_changes = {}
         for image_file in images_to_display:
@@ -535,8 +514,7 @@ def tab2():
                 and 101 <= int(current_filename.strip()) <= 150
             )    
             if new_text.strip() == '':
-                #要修改的新檔名為空
-                original_title = st.session_state['image_original_title'][selected_folder].get(image_file, "無")
+                original_title = st.session_state['original_filename'][selected_folder].get(image_file, "無")
                 if (original_title != "無") and (current_filename != original_title):
                     new_text = original_title
                     new_filename = original_title + extension
@@ -548,10 +526,9 @@ def tab2():
                         removed_flat_count += 1
                 else:
                     new_text = current_filename
-                    new_filename = current_filename + extension
             else:
                 if new_text.strip() != current_filename and new_text_is_101 == False:
-                    original_title = st.session_state['image_original_title'][selected_folder].get(image_file, "無")
+                    original_title = st.session_state['original_filename'][selected_folder].get(image_file, "無")
                     if current_filename == original_title or current_filename_is_101 == True:
                         added_image_count += 1
                         label_ = st.session_state['image_labels'][selected_folder].get(image_file, "無")
@@ -560,7 +537,7 @@ def tab2():
                         elif label_ == "平拍":
                             added_flat_count += 1
                 elif new_text.strip() != current_filename and new_text_is_101 == True:
-                    original_title = st.session_state['image_original_title'][selected_folder].get(image_file, "無")
+                    original_title = st.session_state['original_filename'][selected_folder].get(image_file, "無")
                     if current_filename == original_title or current_filename_is_101 == True:
                         pass
                     else:
