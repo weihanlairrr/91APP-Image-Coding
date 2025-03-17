@@ -318,6 +318,7 @@ def tab2():
                 return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m"]) else "平拍"
         return "無"
 
+
     def handle_submission_1_main_all(selected_folder, images_to_display, outer_images_to_display, folder_to_data):
         def sort_key(item):
             text = item[1]['text'].strip()
@@ -498,26 +499,27 @@ def tab2():
             text_input_key = f"{selected_folder}_{image_file}"
             new_text = st.session_state.get(text_input_key, "")
             extension = os.path.splitext(image_file)[1]
-            new_text_is_101 = (
-                new_text.strip().isdigit() 
-                and 101 <= int(new_text.strip()) <= 150
-            )   
+            original_filename = st.session_state['original_filename'][selected_folder].get(image_file, "無")
 
             if (selected_folder in st.session_state.get('filename_changes', {}) and 
                 image_file in st.session_state['filename_changes'][selected_folder]):
                 current_filename = st.session_state['filename_changes'][selected_folder][image_file]['text']
             else:
                 current_filename = os.path.splitext(os.path.basename(image_file))[0]
-            
+                
+            new_text_is_101 = (
+                new_text.strip().isdigit() 
+                and 101 <= int(new_text.strip()) <= 150
+            )   
             current_filename_is_101 = (
                 current_filename.strip().isdigit() 
                 and 101 <= int(current_filename.strip()) <= 150
             )    
+            
             if new_text.strip() == '':
-                original_title = st.session_state['original_filename'][selected_folder].get(image_file, "無")
-                if (original_title != "無") and (current_filename != original_title):
-                    new_text = original_title
-                    new_filename = original_title + extension
+                if (original_filename != "無") and (current_filename != original_filename):
+                    new_text = original_filename
+                    new_filename = original_filename + extension
                     removed_image_count += 1
                     label_ = st.session_state['image_labels'][selected_folder].get(image_file, "無")
                     if label_ == "模特":
@@ -528,8 +530,7 @@ def tab2():
                     new_text = current_filename
             else:
                 if new_text.strip() != current_filename and new_text_is_101 == False:
-                    original_title = st.session_state['original_filename'][selected_folder].get(image_file, "無")
-                    if current_filename == original_title or current_filename_is_101 == True:
+                    if current_filename == original_filename or current_filename_is_101 == True:
                         added_image_count += 1
                         label_ = st.session_state['image_labels'][selected_folder].get(image_file, "無")
                         if label_ == "模特":
@@ -537,8 +538,7 @@ def tab2():
                         elif label_ == "平拍":
                             added_flat_count += 1
                 elif new_text.strip() != current_filename and new_text_is_101 == True:
-                    original_title = st.session_state['original_filename'][selected_folder].get(image_file, "無")
-                    if current_filename == original_title or current_filename_is_101 == True:
+                    if current_filename == original_filename or current_filename_is_101 == True:
                         pass
                     else:
                         removed_image_count += 1
