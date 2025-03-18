@@ -14,7 +14,6 @@ import sys
 import stat
 import concurrent.futures
 import fitz
-import math
 from io import BytesIO
 from psd_tools import PSDImage
 from collections import Counter, defaultdict
@@ -42,7 +41,7 @@ def tab2():
             os.makedirs(fixed_ai_cache_dir, exist_ok=True)
             os.makedirs(fixed_custom_tmpdir, exist_ok=True)
         if mode in ("reinitialize", "both"):
-            keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2','custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'original_filename', 'image_labels']
+            keys = ['filename_changes', 'image_cache', 'folder_values', 'confirmed_changes', 'uploaded_file_name', 'last_text_inputs', 'has_duplicates', 'duplicate_filenames', 'file_uploader_key2', 'text_area_key2', 'modified_folders', 'previous_uploaded_file_name', 'previous_input_path', 'file_uploader_disabled_2', 'text_area_disabled_2','custom_tmpdir', 'previous_selected_folder', 'final_zip_content', 'source_loaded', 'original_filename', 'image_labels', 'outer_images_map']
             for key in keys:
                 if key in st.session_state:
                     del st.session_state[key]
@@ -71,7 +70,8 @@ def tab2():
             'final_zip_content': None,
             'source_loaded': False,
             'original_filename': {},
-            'image_labels': {}
+            'image_labels': {},
+            'outer_images_map': {}
         }
         for key, value in defaults.items():
             st.session_state.setdefault(key, value)
@@ -309,7 +309,7 @@ def tab2():
             combined = prefix_val + number_val
             if combined == base_name:
                 description = str(row.iloc[3])
-                return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m"]) else "平拍"
+                return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m","上腳"]) else "平拍"
         for idx, row in df_folder.iterrows():
             original_full_filename = str(row.iloc[1]).strip()
             orig_filename_only = os.path.basename(original_full_filename.replace("\\", "/"))
@@ -319,22 +319,22 @@ def tab2():
                 return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m"]) else "平拍"
         return "無"
 
-    def handle_submission_1_main_all(selected_folder, images_to_display, outer_images_to_display, folder_to_data):
+    def handle_submission_1_main_all(selected_folder, desired_images, excluded_images, folder_to_data):
         def sort_key(item):
             text = item[1]['text'].strip()
             if text.isdigit():
                 return (0, int(text))
             return (1, text)
         
+        added_image_count = 0
         removed_image_count = 0
-        modified_outer_count = 0
-        removed_model_count = 0
-        removed_flat_count = 0
         added_model_count = 0
+        removed_model_count = 0
         added_flat_count = 0
-    
+        removed_flat_count = 0
         mapping = {}
-        prefix = get_prefix(images_to_display)
+        
+        prefix = get_prefix(desired_images)
         excel_file_path = None
         for f in os.listdir(st.session_state["custom_tmpdir"]):
             if f.lower().endswith('.xlsx') and '編圖結果' in f:
@@ -363,13 +363,13 @@ def tab2():
     
         st.session_state.setdefault('original_filename', {})
         st.session_state['original_filename'].setdefault(selected_folder, {})
-        for image_file in (images_to_display + outer_images_to_display):
+        for image_file in (desired_images + excluded_images):
             if image_file not in st.session_state['original_filename'][selected_folder]:
                 st.session_state['original_filename'][selected_folder][image_file] = get_original_filename(selected_folder, image_file, df_result, mapping)
     
         st.session_state.setdefault('image_labels', {})
         st.session_state['image_labels'].setdefault(selected_folder, {})
-        for image_file in (images_to_display + outer_images_to_display):
+        for image_file in (desired_images + excluded_images):
             if image_file not in st.session_state['image_labels'][selected_folder]:
                 st.session_state['image_labels'][selected_folder][image_file] = (
                     get_image_label(selected_folder, image_file, df_result) if df_result is not None else "無"
@@ -377,7 +377,8 @@ def tab2():
                 
         current_filenames = {}
         temp_filename_changes = {}
-        for image_file in images_to_display:
+        # 處理內層圖片（desired_images）
+        for image_file in desired_images:
             text_input_key = f"{selected_folder}_{image_file}"
             new_text = st.session_state.get(text_input_key, "")
             extension = os.path.splitext(image_file)[1]
@@ -409,8 +410,9 @@ def tab2():
             current_filenames[image_file] = {'new_filename': new_filename, 'text': current_filename}
             temp_filename_changes[image_file] = {'new_filename': new_filename, 'text': current_filename}
             st.session_state[prev_key] = current_filename
-            
-        for outer_image_file in outer_images_to_display:
+    
+        # 處理外層圖片（excluded_images）
+        for outer_image_file in excluded_images:
             text_input_key = f"outer_{selected_folder}_{outer_image_file}"
             new_text = st.session_state.get(text_input_key, "")
             extension = os.path.splitext(outer_image_file)[1]
@@ -418,7 +420,9 @@ def tab2():
             prev_text = st.session_state.get(prev_key, None)
             original_filename = st.session_state['original_filename'][selected_folder].get(outer_image_file, "無")
             image_label = st.session_state['image_labels'][selected_folder].get(outer_image_file, "無")
-            st.session_state[prev_key] = current_filename
+            # 移除因外層 key 而產生的不必要狀態（避免後續更新時衝突）
+            if f"outer_{selected_folder}_{outer_image_file}" in st.session_state:
+                del st.session_state[f"outer_{selected_folder}_{outer_image_file}"]
             if prev_text is None:
                 filename_without_ext = os.path.splitext(outer_image_file)[0]
                 first_underscore_index = filename_without_ext.find('_')
@@ -427,6 +431,7 @@ def tab2():
                 else:
                     prev_text = filename_without_ext
             
+            # 將 current_filename 先以使用者輸入初始化
             current_filename = new_text
             
             if new_text.strip() == '':
@@ -447,20 +452,23 @@ def tab2():
                             removed_model_count += 1
                         elif image_label == "平拍":
                             removed_flat_count += 1
+                    current_filename = prev_text
+                    new_filename = prefix + current_filename + extension
             else:
-                current_filename = prev_text
+                # 若使用者有輸入非空且非原始檔名的值，則採用新輸入值，並將外層圖片視為移回內層
+                current_filename = new_text
                 new_filename = prefix + current_filename + extension
             
             if new_text.strip() != prev_text:
                 temp_filename_changes[outer_image_file] = {'new_filename': new_filename, 'text': current_filename}
                 if new_filename != '':
-                    modified_outer_count += 1
+                    added_image_count += 1
                     if image_label == "模特":
                         added_model_count += 1
                     elif image_label == "平拍":
                         added_flat_count += 1
             st.session_state[prev_key] = current_filename
-            
+    
         new_filenames = [data['new_filename'] for data in temp_filename_changes.values() if data['new_filename'] != '']
         duplicates = [filename for filename, count in Counter(new_filenames).items() if count > 1]
         if duplicates:
@@ -479,7 +487,7 @@ def tab2():
                 temp_filename_changes[file]['new_filename'] = new_filename
                 temp_filename_changes[file]['text'] = new_index
                 rename_counter += 1
-            
+                
         if selected_folder not in st.session_state['filename_changes']:
             st.session_state['filename_changes'][selected_folder] = {}
         st.session_state['filename_changes'][selected_folder].update(temp_filename_changes)
@@ -488,8 +496,8 @@ def tab2():
             st.session_state[text_input_key] = data['text']
         if num_images_key in st.session_state:
             current_num_images = int(st.session_state[num_images_key])
-            st.session_state[num_images_key] = str(max(0, current_num_images - removed_image_count + modified_outer_count))
-
+            st.session_state[num_images_key] = str(max(0, current_num_images - removed_image_count + added_image_count))
+    
         ad_images_key = f"{selected_folder}_ad_images"
         model_images_key = f"{selected_folder}_model_images"
         flat_images_key = f"{selected_folder}_flat_images"
@@ -515,16 +523,15 @@ def tab2():
         }
         st.session_state['modified_folders'].add(data_folder_name)
 
-    def handle_submission_2_img(selected_folder, images_to_display, outer_images_to_display, folder_to_data):
-        removed_image_count = 0
-        modified_outer_count = 0
+    def handle_submission_2_img(selected_folder, desired_images, excluded_images, folder_to_data):
         added_image_count = 0
-        removed_model_count = 0
-        removed_flat_count = 0
+        removed_image_count = 0
         added_model_count = 0
+        removed_model_count = 0
         added_flat_count = 0
-    
+        removed_flat_count = 0
         mapping = {}
+        
         excel_file_path = None
         for f in os.listdir(st.session_state["custom_tmpdir"]):
             if f.lower().endswith('.xlsx') and '編圖結果' in f:
@@ -554,13 +561,13 @@ def tab2():
     
         st.session_state.setdefault('original_filename', {})
         st.session_state['original_filename'].setdefault(selected_folder, {})
-        for image_file in (images_to_display + outer_images_to_display):
+        for image_file in (desired_images):
             if image_file not in st.session_state['original_filename'][selected_folder]:
                 st.session_state['original_filename'][selected_folder][image_file] = get_original_filename(selected_folder, image_file, df_result, mapping)
     
         st.session_state.setdefault('image_labels', {})
         st.session_state['image_labels'].setdefault(selected_folder, {})
-        for image_file in (images_to_display + outer_images_to_display):
+        for image_file in (desired_images):
             if image_file not in st.session_state['image_labels'][selected_folder]:
                 st.session_state['image_labels'][selected_folder][image_file] = (
                     get_image_label(selected_folder, image_file, df_result) if df_result is not None else "無"
@@ -568,7 +575,7 @@ def tab2():
                 
         current_filenames = {}
         temp_filename_changes = {}
-        for image_file in images_to_display:
+        for image_file in desired_images:
             text_input_key = f"{selected_folder}_{image_file}"
             new_text = st.session_state.get(text_input_key, "")
             extension = os.path.splitext(image_file)[1]
@@ -648,7 +655,7 @@ def tab2():
             if num_images_key in st.session_state:
                 current_num_images = int(st.session_state[num_images_key])
                 st.session_state[num_images_key] = str(
-                    max(0, current_num_images - removed_image_count + modified_outer_count + added_image_count)
+                    max(0, current_num_images - removed_image_count + added_image_count)
                 )
             current_model = int(st.session_state.get(model_images_key, 0))
             current_flat = int(st.session_state.get(flat_images_key, 0))
@@ -1084,10 +1091,10 @@ def tab2():
         for folder in top_level_folders:
             st.session_state['image_cache'].setdefault(folder, {})
             img_folder_path = os.path.join(tmpdirname, folder, '2-IMG')
-            use_full_filename = True
+            is_1_main_all = True
             if not os.path.exists(img_folder_path):
                 img_folder_path = os.path.join(tmpdirname, folder, '1-Main', 'All')
-                use_full_filename = False
+                is_1_main_all = False
             tasks = []
             with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
                 if os.path.exists(img_folder_path):
@@ -1140,8 +1147,8 @@ def tab2():
             if selected_folder is None:
                 st.stop()
             img_folder_path = os.path.join(tmpdirname, selected_folder, '2-IMG')
-            use_full_filename = True if os.path.exists(img_folder_path) else False
-            if not use_full_filename:
+            is_1_main_all = True if os.path.exists(img_folder_path) else False
+            if not is_1_main_all:
                 img_folder_path = os.path.join(tmpdirname, selected_folder, '1-Main', 'All')
             outer_folder_path = os.path.join(tmpdirname, selected_folder)
             outer_images = get_outer_folder_images(outer_folder_path)
@@ -1155,23 +1162,28 @@ def tab2():
                     if selected_folder not in st.session_state['image_cache']:
                         st.session_state['image_cache'][selected_folder] = {}
                     all_images = set(image_files + outer_images)
-                    images_to_display = []
-                    outer_images_to_display = []
+                    desired_images = []
+                    excluded_images = []
                     for image_file in all_images:
                         if (selected_folder in st.session_state['filename_changes']
                                 and image_file in st.session_state['filename_changes'][selected_folder]):
                             data = st.session_state['filename_changes'][selected_folder][image_file]
                             if data['new_filename'] == '':
-                                outer_images_to_display.append(image_file)
+                                excluded_images.append(image_file)
                             else:
-                                images_to_display.append(image_file)
+                                desired_images.append(image_file)
                         else:
                             if image_file in image_files:
-                                images_to_display.append(image_file)
+                                desired_images.append(image_file)
                             else:
-                                outer_images_to_display.append(image_file)
-                    images_to_display.sort(key=get_sort_key)
-                    outer_images_to_display.sort(key=get_sort_key)
+                                excluded_images.append(image_file)
+                    desired_images.sort(key=get_sort_key)
+                    excluded_images.sort(key=get_sort_key)
+
+                    # 記錄「外層圖片」至 session_state，方便後續統一列出
+                    st.session_state.setdefault('outer_images_map', {})
+                    st.session_state['outer_images_map'][selected_folder] = excluded_images
+
                     basename_to_extensions = defaultdict(list)
                     for image_file in all_images:
                         basename, ext = os.path.splitext(image_file)
@@ -1180,7 +1192,7 @@ def tab2():
                         colAA, colBB, colCC = st.columns([17, 0.01, 1.8])
                         with colAA:
                             cols = st.columns(7)
-                            for idx, image_file in enumerate(images_to_display):
+                            for idx, image_file in enumerate(desired_images):
                                 if idx % 7 == 0 and idx != 0:
                                     cols = st.columns(7)
                                 col = cols[idx % 7]
@@ -1195,7 +1207,7 @@ def tab2():
                                     image = st.session_state['image_cache'][selected_folder][image_path]
                                 col.image(image, use_container_width=True)
                                 filename_without_ext = os.path.splitext(image_file)[0]
-                                current_filename = filename_without_ext if use_full_filename else (filename_without_ext.split('_', 1)[-1] if '_' in filename_without_ext else filename_without_ext)
+                                current_filename = filename_without_ext if is_1_main_all else (filename_without_ext.split('_', 1)[-1] if '_' in filename_without_ext else filename_without_ext)
                                 if (selected_folder in st.session_state['filename_changes']
                                         and image_file in st.session_state['filename_changes'][selected_folder]):
                                     modified_text = st.session_state['filename_changes'][selected_folder][image_file]['text']
@@ -1218,6 +1230,7 @@ def tab2():
                                     ad_images_default = data.get('廣告圖', '1')
                                     model_images_default = data.get('模特', '0')
                                     flat_images_default = data.get('平拍', '0')
+                                    
                                 num_images_key = f"{selected_folder}_num_images"
                                 ad_images_key = f"{selected_folder}_ad_images"
                                 model_images_key = f"{selected_folder}_model_images"
@@ -1230,10 +1243,10 @@ def tab2():
                                     st.session_state[model_images_key] = model_images_default
                                 if flat_images_key not in st.session_state:
                                     st.session_state[flat_images_key] = flat_images_default
-                                upper_limit = len(images_to_display) + len(outer_images_to_display)
+                                upper_limit = len(desired_images) + len(excluded_images)
                                 num_images_options = [str(i) for i in range(0, upper_limit + 1)]
-                                ad_images_options = [str(i) for i in range(1, upper_limit + 1)]
-                                type_images_options = [str(i) for i in range(0, 21)]
+                                ad_images_options = [str(i) for i in range(0, upper_limit + 1)]
+                                type_images_options = [str(i) for i in range(0, upper_limit + 1)]
                                 with colCC:
                                     st.selectbox('張數', num_images_options, key=num_images_key)
                                     st.selectbox('廣告圖', ad_images_options, key=ad_images_key)
@@ -1243,20 +1256,20 @@ def tab2():
                                 num_images_key = None
                                 ad_images_key = None
                                 folder_to_data = None
+                                
                         st.divider()
-                        
                         colA, colB, colC, colD = st.columns([3, 5, 8, 2.5], vertical_alignment="center")
                         if colA.form_submit_button(
                             "暫存修改",
-                            on_click= handle_submission_2_img if use_full_filename else handle_submission_1_main_all,
-                            args=(selected_folder, images_to_display, outer_images_to_display, folder_to_data)
+                            on_click= handle_submission_2_img if is_1_main_all else handle_submission_1_main_all,
+                            args=(selected_folder, desired_images, excluded_images, folder_to_data)
                         ):
                             if st.session_state.get('has_duplicates') is False:
                                 st.toast(f"資料夾 {selected_folder} 暫存修改成功!", icon='🎉')
-                        if outer_images_to_display and not use_full_filename:
+                        if excluded_images and not is_1_main_all:
                             with colD.popover("外層圖片"):
                                 outer_cols = st.columns(6)
-                                for idx, outer_image_file in enumerate(outer_images_to_display):
+                                for idx, outer_image_file in enumerate(excluded_images):
                                     if idx % 6 == 0 and idx != 0:
                                         outer_cols = st.columns(6)
                                     col = outer_cols[idx % 6]
@@ -1270,8 +1283,7 @@ def tab2():
                                     else:
                                         outer_image = st.session_state['image_cache'][selected_folder][outer_image_path]
                                     col.image(outer_image, use_container_width=True)
-                                    filename_without_ext = os.path.splitext(outer_image_file)[0]
-                                    current_filename = filename_without_ext if use_full_filename else (filename_without_ext.split('_', 1)[-1] if '_' in filename_without_ext else filename_without_ext)
+                                    current_filename = os.path.splitext(outer_image_file)[0]
                                     if (selected_folder in st.session_state['filename_changes']
                                             and outer_image_file in st.session_state['filename_changes'][selected_folder]):
                                         modified_text = st.session_state['filename_changes'][selected_folder][outer_image_file]['text']
