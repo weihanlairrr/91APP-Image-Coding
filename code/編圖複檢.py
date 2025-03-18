@@ -716,10 +716,19 @@ def tab2():
                         data = st.session_state['filename_changes'][folder_name][original_file]
                         new_filename = data['new_filename']
                         if new_filename.strip() == '':
-                            new_rel_path = os.path.join(folder_name, original_file)
+                            outer_key = f"outer_{folder_name}_{original_file}"
+                            if outer_key in st.session_state and st.session_state[outer_key].strip() != "":
+                                base, ext = os.path.splitext(original_file)
+                                modified_filename = st.session_state[outer_key].strip() + ext
+                            else:
+                                modified_filename = original_file
+                            new_rel_path = os.path.join(folder_name, modified_filename)
                         else:
                             if len(path_parts) == 2:
-                                new_rel_path = os.path.join(folder_name, new_filename)
+                                if os.path.exists(os.path.join(tmpdirname, folder_name, '2-IMG')):
+                                    new_rel_path = os.path.join(folder_name, '2-IMG', new_filename)
+                                else:
+                                    new_rel_path = os.path.join(folder_name, '1-Main', 'All', new_filename)
                             else:
                                 if os.path.exists(os.path.join(tmpdirname, folder_name, '2-IMG')):
                                     idx = path_parts.index(folder_name)
@@ -730,6 +739,7 @@ def tab2():
                                 new_rel_path = os.path.join(*path_parts)
                         all_files.append((full_path, new_rel_path))
                     else:
+                        # 若無暫存修改記錄則採用原始相對路徑
                         all_files.append((full_path, rel_path))
         file_data_map = {}
         with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
@@ -763,7 +773,6 @@ def tab2():
                         return s.zfill(2)
                     df_result["編號"] = df_result["編號"].apply(fix_code)
                 excel_sheets["編圖紀錄"] = df_result
-
             if excel_sheets:
                 result_df = excel_sheets.get('編圖張數與廣告圖', pd.DataFrame(columns=['資料夾', '張數', '廣告圖']))
                 for idx, row in result_df.iterrows():
@@ -838,9 +847,9 @@ def tab2():
                     worksheet2.set_column(1, 2, None, text_format)
             excel_buffer.seek(0)
             zipf.writestr(found_excel_name if found_excel_name else '編圖結果.xlsx', excel_buffer.getvalue())
-
+        
         zip_buffer.seek(0)
-        return zip_buffer            
+        return zip_buffer
 
     def write_to_zip(zipf, file_path, arcname):
         ct = get_compress_type(file_path)
