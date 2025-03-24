@@ -18,13 +18,17 @@ import concurrent.futures
 import subprocess
 import stat
 
+# =============================================================================
+# 主介面函式 tab1：設定、檔案處理、模型與索引建立、影像處理與結果下載
+# =============================================================================
 def tab1():
-    # 定義 onerror 處理函式，嘗試移除唯讀屬性後重試刪除
+    # -------------------------------------------------------------------------
+    # 檔案與目錄處理相關輔助函式
+    # -------------------------------------------------------------------------
     def on_rm_error(func, path, exc_info):
         os.chmod(path, stat.S_IWRITE)
         func(path)
-        
-    # 定義刪除檔案的輔助函式
+    
     def remove_file(path):
         try:
             os.remove(path)
@@ -36,9 +40,9 @@ def tab1():
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
     faiss.omp_set_num_threads(min(32, (os.cpu_count() or 1) + 4))
     
-    # =============================================================================
-    # 基本工具與檔案處理函式
-    # =============================================================================
+    # -------------------------------------------------------------------------
+    # 基本初始化與檔案處理函式
+    # -------------------------------------------------------------------------
     def initialize_tab1():
         defaults = {
             'file_uploader_key1': 0,
@@ -54,7 +58,7 @@ def tab1():
                 st.session_state[key] = value
 
     def find_brand_files(brand_name):
-        brand_path = os.path.join("dependencies", brand_name)
+        brand_path = os.path.join("G:\\共用雲端硬碟\\TP代營運\\1-小工具\\自動編圖工具\\dependencies", brand_name)
         train_file = None
         angle_filename_reference = None
         for filename in os.listdir(brand_path):
@@ -67,19 +71,23 @@ def tab1():
 
     def copytree_multithreaded(src, dst):
         if os.path.exists(dst):
-            shutil.rmtree(dst, onerror=on_rm_error)
+            shutil.rmtree(dst, on_rm_error)
         os.makedirs(dst, exist_ok=True)
         try:
             if os.name == 'nt':
-                cmd = ['robocopy', src, dst, '/MIR', '/MT:20', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS']
+                # 加入 /XD 參數排除 "0-上架資料" 資料夾
+                cmd = ['robocopy', src, dst, '/MIR', '/MT:20', '/R:0', '/W:0', '/NFL', '/NDL', '/NJH', '/NJS', '/XD', '0-上架資料']
                 subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             else:
-                cmd = ['rsync', '-a', src + '/', dst + '/']
+                # 加入 --exclude 參數排除 "0-上架資料" 資料夾
+                cmd = ['rsync', '-a', '--exclude', '0-上架資料', src + '/', dst + '/']
                 subprocess.run(cmd)
         except Exception:
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
                 futures = []
                 for root, dirs, files in os.walk(src):
+                    # 排除 "0-上架資料" 資料夾
+                    dirs[:] = [d for d in dirs if d != "0-上架資料"]
                     rel_path = os.path.relpath(root, src)
                     dst_dir = os.path.join(dst, rel_path) if rel_path != '.' else dst
                     os.makedirs(dst_dir, exist_ok=True)
@@ -131,9 +139,9 @@ def tab1():
                         image_files.append((relative_image_path, full_image_path))
         return image_files, use_two_img_folder
 
-    # =============================================================================
-    # 數學運算、標準化與索引建立函式
-    # =============================================================================
+    # -------------------------------------------------------------------------
+    # 數學運算與索引建立相關函式
+    # -------------------------------------------------------------------------
     def get_dynamic_nlist(num_samples):
         if num_samples >= 1000:
             return min(200, int(np.sqrt(num_samples)))
@@ -155,13 +163,13 @@ def tab1():
         index.add(features)
         return index
 
-    # =============================================================================
-    # 模型載入與影像前處理
-    # =============================================================================
+    # -------------------------------------------------------------------------
+    # 模型載入與影像前處理相關函式
+    # -------------------------------------------------------------------------
     @st.cache_resource
     def load_resnet_model():
         device = torch.device("cpu")
-        weights_path = "dependencies/resnet50.pt"
+        weights_path = "lib/dependencies/resnet50.pt"
         resnet = models.resnet50()
         resnet.load_state_dict(torch.load(weights_path, map_location=device), strict=False)
         resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
@@ -199,9 +207,9 @@ def tab1():
             features = model(image).cpu().numpy().flatten()
         return features
 
-    # =============================================================================
+    # -------------------------------------------------------------------------
     # UI 狀態與事件處理函式
-    # =============================================================================
+    # -------------------------------------------------------------------------
     def handle_file_uploader_change():
         file_key = 'file_uploader_' + str(st.session_state.get('file_uploader_key1', 0))
         uploaded_file_1 = st.session_state.get(file_key, None)
@@ -210,9 +218,9 @@ def tab1():
             if current_filename != st.session_state.get('previous_uploaded_file_name_tab1', None):
                 try:
                     if os.path.exists("uploaded_images"):
-                        shutil.rmtree("uploaded_images", onerror=on_rm_error)
+                        shutil.rmtree("uploaded_images", on_rm_error)
                     if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
-                        shutil.rmtree(st.session_state["custom_tmpdir"], onerror=on_rm_error)
+                        shutil.rmtree(st.session_state["custom_tmpdir"], on_rm_error)
                 except:
                     pass
                 st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
@@ -225,9 +233,9 @@ def tab1():
         if text_content != st.session_state.get('previous_input_path_tab1', None):
             try:
                 if os.path.exists("uploaded_images"):
-                    shutil.rmtree("uploaded_images", onerror=on_rm_error)
+                    shutil.rmtree("uploaded_images", on_rm_error)
                 if "custom_tmpdir" in st.session_state and st.session_state["custom_tmpdir"]:
-                    shutil.rmtree(st.session_state["custom_tmpdir"], onerror=on_rm_error)
+                    shutil.rmtree(st.session_state["custom_tmpdir"], on_rm_error)
             except:
                 pass
             st.session_state["custom_tmpdir"] = tempfile.mkdtemp()
@@ -248,16 +256,15 @@ def tab1():
         st.session_state['file_uploader_disabled_1'] = False
         st.session_state['text_area_disabled_1'] = False
 
-    # =============================================================================
-    # 分類比對與統計函式
-    # =============================================================================
+    # -------------------------------------------------------------------------
+    # 分類比對與統計相關函式
+    # -------------------------------------------------------------------------
     def category_match(image_files, keywords, match_all):
         if match_all:
             return all(any(keyword in image_file for image_file in image_files) for keyword in keywords)
         else:
             return any(any(keyword in image_file for image_file in image_files) for keyword in keywords)
 
-    # 這裡保留 is_banned_angle 函式，但後續候選角度已先行移除被禁止角度
     def is_banned_angle(item_angle, rule_flags):
         for idx, rule in enumerate(angle_banning_rules):
             if rule_flags[idx]:
@@ -273,11 +280,12 @@ def tab1():
         filtered_results = results[
             (results["編號"] != "超過可編上限") &
             (results["編號"] != "不編的角度") &
-            (results["編號"] != "")
+            (results["編號"] != "") &
+            (~results["編號"].apply(lambda x: x.isdigit() and int(x) >= 101))
         ]
         statistics = []
         for folder, folder_results in filtered_results.groupby("資料夾"):
-            model_count = folder_results["角度"].apply(lambda x: ("模特" in x) or ("_9" in x) or ("-0m" in x)).sum()
+            model_count = folder_results["角度"].apply(lambda x: ("模特" in x) or ("_9" in x) or ("-0m" in x) or ("上腳" in x)).sum()
             flat_lay_count = len(folder_results) - model_count
             statistics.append({
                 "資料夾": folder,
@@ -286,9 +294,9 @@ def tab1():
             })
         return pd.DataFrame(statistics)
 
-    # =============================================================================
-    # 影像重新命名與打包相關函式
-    # =============================================================================
+    # -------------------------------------------------------------------------
+    # 影像重新命名與打包下載相關函式
+    # -------------------------------------------------------------------------
     def get_prefix(angle, best_category, folder, angle_to_prefix):
         prefix = angle_to_prefix.get((angle, best_category["category"]), angle_to_prefix.get((angle, None), None))
         cat_setting = category_settings.get(best_category["category"], category_settings.get("其他"))
@@ -346,10 +354,11 @@ def tab1():
 
     def rename_and_zip_folders(results, output_excel_data, skipped_images, folder_settings, angle_to_prefix, selected_brand):
         output_folder_path = "uploaded_images"
-        unmodified_files = {}  
+        unmodified_files = {}
         for result in results:
             folder_name = result["資料夾"]
-            image_file = result["圖片"]
+            subfolder = result.get("子資料夾", "")
+            filename = result["圖片"]
             new_number = result["編號"]
             prefix = result.get("前綴", None)
             unmodified_reason = result["不編原因"]
@@ -360,22 +369,36 @@ def tab1():
             main_folder_structure = "2-IMG" if use_two_img_folder else "1-Main/All"
             main_folder_path = os.path.join(folder_path, main_folder_structure)
             os.makedirs(main_folder_path, exist_ok=True)
-            old_image_path = os.path.join(folder_path, image_file)
-            file_extension = os.path.splitext(image_file)[1].lower()
+            if subfolder:
+                old_image_path = os.path.join(folder_path, subfolder, filename)
+            else:
+                old_image_path = os.path.join(folder_path, filename)
+            file_extension = os.path.splitext(filename)[1].lower()
             
             if unmodified_reason != "":
-                if use_two_img_folder:
-                    unmodified_files.setdefault(folder_name, []).append(old_image_path)
-                else:
-                    new_image_path = os.path.join(folder_path, os.path.basename(image_file))
+                if selected_brand == "TNF":
+                    if use_two_img_folder:
+                        target_folder = os.path.join(folder_path, "2-IMG")
+                        new_image_name = f"{new_number}{file_extension}"
+                        new_image_path = os.path.join(target_folder, new_image_name)
+                    else:
+                        new_image_name = f"{new_number}{file_extension}"
+                        new_image_path = os.path.join(folder_path, new_image_name)
                     if os.path.exists(old_image_path) and os.path.normpath(old_image_path) != os.path.normpath(new_image_path):
                         os.rename(old_image_path, new_image_path)
+                else:
+                    if use_two_img_folder:
+                        unmodified_files.setdefault(folder_name, []).append(old_image_path)
+                    else:
+                        new_image_path = os.path.join(folder_path, os.path.basename(filename))
+                        if os.path.exists(old_image_path) and os.path.normpath(old_image_path) != os.path.normpath(new_image_path):
+                            os.rename(old_image_path, new_image_path)
             else:
                 new_image_name = f"{prefix}{new_number}{file_extension}" if use_two_img_folder else f"{prefix}_{new_number}{file_extension}"
                 new_image_path = os.path.join(main_folder_path, new_image_name)
                 if os.path.exists(old_image_path) and os.path.normpath(old_image_path) != os.path.normpath(new_image_path):
                     os.rename(old_image_path, new_image_path)
-                    
+                        
         if selected_brand == "TNF":
             for folder_name, file_list in unmodified_files.items():
                 use_two_img_folder = folder_settings.get(folder_name, False)
@@ -392,7 +415,7 @@ def tab1():
                     if os.path.exists(old_path):
                         os.rename(old_path, new_path)
                     counter += 1
-    
+        
         zip_buffer = BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1) as zipf:
             for folder in os.listdir("uploaded_images"):
@@ -421,18 +444,18 @@ def tab1():
             zipf.writestr(f"{selected_brand}編圖結果.xlsx", output_excel_data)
         return zip_buffer.getvalue()
 
-    # =============================================================================
-    # 其他 UI 事件處理
-    # =============================================================================
+    # -------------------------------------------------------------------------
+    # 其他 UI 事件處理函式
+    # -------------------------------------------------------------------------
     def update_brand():
         new_brand = st.session_state["brand_selectbox"]
         if new_brand != "":
             with open(selected_brand_file, "w", encoding="utf-8") as f:
                 f.write(new_brand)
 
-    # =============================================================================
+    # -------------------------------------------------------------------------
     # 單一影像處理函式
-    # =============================================================================
+    # -------------------------------------------------------------------------
     def process_single_image(image_file, image_path, group_presence, group_conditions, keywords_to_skip, special_mappings, folder, preprocess, resnet):
         return_dict = {
             "skip": False,
@@ -454,14 +477,10 @@ def tab1():
                     return return_dict
         special_angles = []
         special_category = None
-        category_filename = None
         for substr, mapping in special_mappings.items():
             if substr in image_file:
                 special_angles = mapping['angles']
                 special_category = mapping['category']
-                category_filename = mapping.get('category_filename')
-                if category_filename:
-                    pass
                 break
         return_dict["special_angles"] = special_angles
         return_dict["special_category"] = special_category
@@ -501,11 +520,11 @@ def tab1():
         return_dict["features"] = img_feat
         return return_dict
 
-    # =============================================================================
+    # -------------------------------------------------------------------------
     # 主流程：讀取設定、檔案處理、分類比對、影像重新命名與打包下載
-    # =============================================================================
-    selected_brand_file = "dependencies/selected_brand.txt"
-    brand_folders = [f for f in os.listdir("dependencies") if os.path.isdir(os.path.join("dependencies", f))
+    # -------------------------------------------------------------------------
+    selected_brand_file = "lib/dependencies/selected_brand.txt"
+    brand_folders = [f for f in os.listdir("G:\\共用雲端硬碟\\TP代營運\\1-小工具\\自動編圖工具\\dependencies") if os.path.isdir(os.path.join("G:\\共用雲端硬碟\\TP代營運\\1-小工具\\自動編圖工具\\dependencies", f))
                      and not f.startswith('.') and f != "__pycache__"]
     brand_list = brand_folders
     if os.path.exists(selected_brand_file):
@@ -678,7 +697,7 @@ def tab1():
             original_features_by_category = {k: v.copy() for k, v in features_by_category.items()}
 
             if os.path.exists("uploaded_images") and os.path.isdir("uploaded_images"):
-                shutil.rmtree("uploaded_images", onerror=on_rm_error)
+                shutil.rmtree("uploaded_images", on_rm_error)
             if os.path.exists("temp.zip") and os.path.isfile("temp.zip"):
                 remove_file("temp.zip")
             with st.spinner("   讀取檔案中，請稍候..."):
@@ -741,6 +760,9 @@ def tab1():
             processed_folders = 0
             group_conditions = substitute
 
+            # -----------------------------------------------------------------
+            # 逐個處理每個資料夾
+            # -----------------------------------------------------------------
             for folder in image_folders:
                 features_by_category = {k: v.copy() for k, v in original_features_by_category.items()}
                 folder_path = os.path.join("uploaded_images", folder)
@@ -749,7 +771,7 @@ def tab1():
                 if not image_files:
                     if folder != "0-上架資料":
                         st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
-                    shutil.rmtree(folder_path, onerror=on_rm_error)
+                    shutil.rmtree(folder_path, on_rm_error)
                     processed_folders += 1
                     progress_bar.progress(processed_folders / total_folders)
                     continue
@@ -809,7 +831,7 @@ def tab1():
                 if len(folder_features) == 0:
                     if folder != "0-上架資料":
                         st.warning(f"資料夾 {folder} 中沒有有效的圖片，跳過此資料夾")
-                    shutil.rmtree(folder_path, onerror=on_rm_error)
+                    shutil.rmtree(folder_path, on_rm_error)
                     processed_folders += 1
                     progress_bar.progress(processed_folders / total_folders)
                     continue
@@ -845,12 +867,11 @@ def tab1():
                         best_category = {'brand': selected_brand, 'category': best_category_name}
                     else:
                         st.warning(f"資料夾 {folder} 無法匹配任何分類，跳過此資料夾")
-                        shutil.rmtree(folder_path, onerror=on_rm_error)
+                        shutil.rmtree(folder_path, on_rm_error)
                         processed_folders += 1
                         progress_bar.progress(processed_folders / total_folders)
                         continue
 
-                # 建立候選角度清單
                 filtered_by_category = features_by_category[selected_brand][best_category["category"]]["labeled_features"]
                 angle_to_number = { item["labels"]["angle"]: item["labels"]["number"] for item in filtered_by_category }
                 used_angles = set()
@@ -870,8 +891,6 @@ def tab1():
                     idx.add(feats_arr)
                     angle_index[ang] = idx
 
-                # ──【重點修改】在此依據資料夾中所有圖片檔名，檢查是否觸發任一角度禁止規則，
-                # 若觸發，則根據「等於」或「包含」的設定，從候選角度清單中移除該禁止角度。
                 folder_triggered_rules = [False] * len(angle_banning_rules)
                 for idx, rule in enumerate(angle_banning_rules):
                     for img_fname in image_filenames:
@@ -881,7 +900,6 @@ def tab1():
                                 break
                         if folder_triggered_rules[idx]:
                             break
-                # 將觸發的規則對應的禁止角度從候選清單中移除
                 for idx, triggered in enumerate(folder_triggered_rules):
                     if triggered:
                         for banned_ang in angle_banning_rules[idx]["banned_angle"]:
@@ -900,9 +918,7 @@ def tab1():
                                             angle_index.pop(candidate)
                                         if candidate in angle_feats_map:
                                             angle_feats_map.pop(candidate)
-                # 將 rule_flags 設為 folder_triggered_rules 供後續 is_banned_angle 使用（理論上候選角度已移除）
                 rule_flags = folder_triggered_rules
-                # ──【修改結束】
 
                 # 處理 special_angles 的圖片
                 for img_data in folder_features:
@@ -917,7 +933,6 @@ def tab1():
                                 best_angle = None
                                 best_similarity = -1
                                 for sa in valid_special_angles:
-                                    # 由於候選角度中被禁止的已移除，此處直接比對相似度
                                     if sa in used_angles and sa not in reassigned_allowed:
                                         continue
                                     if sa in angle_index:
@@ -933,7 +948,8 @@ def tab1():
                                     used_angles.add(best_angle)
                                     final_results[image_file] = {
                                         "資料夾": folder,
-                                        "圖片": image_file,
+                                        "子資料夾": os.path.dirname(image_file),
+                                        "圖片": os.path.basename(image_file),
                                         "商品分類": best_category["category"],
                                         "角度": best_angle,
                                         "編號": angle_to_number[best_angle],
@@ -954,7 +970,8 @@ def tab1():
                                         used_angles.add(sa)
                                         final_results[image_file] = {
                                             "資料夾": folder,
-                                            "圖片": image_file,
+                                            "子資料夾": os.path.dirname(image_file),
+                                            "圖片": os.path.basename(image_file),
                                             "商品分類": best_category["category"],
                                             "角度": sa,
                                             "編號": angle_to_number[sa],
@@ -965,7 +982,6 @@ def tab1():
                                         img_data["special_angles"] = []
                         else:
                             img_data["special_angles"] = []
-                # 處理非 special_angles 的圖片
                 non_special_images = [x for x in folder_features if not x["special_angles"]]
                 if not special_mappings:
                     non_special_images = folder_features
@@ -1042,7 +1058,8 @@ def tab1():
                                 prefix_ = get_prefix(angle_, cand["label"], cand["folder"], angle_to_prefix)
                                 final_results[imf] = {
                                     "資料夾": cand["folder"],
-                                    "圖片": imf,
+                                    "子資料夾": os.path.dirname(imf),
+                                    "圖片": os.path.basename(imf),
                                     "商品分類": cand["label"]["category"],
                                     "角度": angle_,
                                     "編號": cand["label"]["number"],
@@ -1059,7 +1076,8 @@ def tab1():
                                 prefix_ = get_prefix(angle_, cand["label"], cand["folder"], angle_to_prefix)
                                 final_results[imf] = {
                                     "資料夾": cand["folder"],
-                                    "圖片": imf,
+                                    "子資料夾": os.path.dirname(imf),
+                                    "圖片": os.path.basename(imf),
                                     "商品分類": cand["label"]["category"],
                                     "角度": angle_,
                                     "編號": cand["label"]["number"],
@@ -1081,7 +1099,8 @@ def tab1():
                                     prefix_ = get_prefix(angle_, cand["label"], cand["folder"], angle_to_prefix)
                                     final_results[best_img] = {
                                         "資料夾": cand["folder"],
-                                        "圖片": best_img,
+                                        "子資料夾": os.path.dirname(best_img),
+                                        "圖片": os.path.basename(best_img),
                                         "商品分類": cand["label"]["category"],
                                         "角度": angle_,
                                         "編號": cand["label"]["number"],
@@ -1096,14 +1115,16 @@ def tab1():
                 for image_file in unassigned_images:
                     final_results[image_file] = {
                         "資料夾": folder,
-                        "圖片": image_file,
+                        "子資料夾": os.path.dirname(image_file),
+                        "圖片": os.path.basename(image_file),
                         "商品分類": best_category["category"],
                         "角度": "已無可分配的角度"
                     }
                 for skip in [s for s in skipped_images if s["資料夾"] == folder]:
                     final_results[skip["圖片"]] = {
                         "資料夾": folder,
-                        "圖片": skip["圖片"],
+                        "子資料夾": os.path.dirname(skip["圖片"]),
+                        "圖片": os.path.basename(skip["圖片"]),
                         "商品分類": best_category["category"],
                         "角度": skip["skip_reason"],
                         "編號": "",
@@ -1142,14 +1163,27 @@ def tab1():
                     res["角度"] = ""
                 if "不編原因" not in res:
                     res["不編原因"] = ""
+            if selected_brand == "TNF":
+                results_by_folder = {}
+                for res in results:
+                    folder = res["資料夾"]
+                    if folder not in results_by_folder:
+                        results_by_folder[folder] = []
+                    results_by_folder[folder].append(res)
+                for folder, folder_results in results_by_folder.items():
+                    counter = 101
+                    for res in folder_results:
+                        if res.get("不編原因", "") != "":
+                            res["前綴"] = ""
+                            res["編號"] = f"{counter:02d}"
+                            counter += 1
             result_df = pd.DataFrame(results).fillna("")
-            desired_order = ["資料夾", "圖片", "商品分類", "角度", "前綴", "編號", "最大相似度", "不編原因"]
+            desired_order = ["資料夾", "子資料夾", "圖片", "商品分類", "角度", "前綴", "編號", "最大相似度", "不編原因"]
             result_df = result_df[desired_order]
             result_df["前綴"] = [
-                (row["前綴"] + "_") if (not folder_settings.get(row["資料夾"], False) and not row["不編原因"]) else row["前綴"] 
+                (row["前綴"] + "_") if (not folder_settings.get(row["資料夾"], False) and (row["不編原因"] == "" or row["不編原因"] == "超過可編上限")) else row["前綴"]
                 for _, row in result_df.iterrows()
             ]
-
             st.dataframe(result_df, hide_index=True, use_container_width=True, height=457)
             folder_data = []
             for folder in image_folders:
@@ -1157,12 +1191,13 @@ def tab1():
                 valid_images = folder_results[
                     (folder_results['編號'] != '超過可編上限') &
                     (folder_results['編號'] != '不編的角度') &
-                    (folder_results['編號'] != '')
+                    (folder_results['編號'] != '') &
+                    (~folder_results['編號'].apply(lambda x: x.isdigit() and int(x) >= 101))
                 ]
                 num_images = len(valid_images)
-                ad_images = valid_images[valid_images['角度'].str.contains('情境', na=False)]
+                ad_images = valid_images[valid_images['角度'].str.contains('情境|HM', na=False)]
                 num_ad_images = len(ad_images)
-                ad_image_value = f"{num_ad_images + 1:02}" if num_ad_images > 0 else "01"
+                ad_image_value = f"{num_ad_images + 1:02}" if (num_ad_images > 0 and  num_ad_images < label_limit) else "01"
                 folder_data.append({'資料夾': folder, '張數': num_images, '廣告圖': ad_image_value})
             folder_df = pd.DataFrame(folder_data)
             image_type_statistics_df = generate_image_type_statistics(result_df)
@@ -1192,4 +1227,3 @@ def tab1():
                 on_click=reset_key_tab1
             ):
                 st.rerun()
-
