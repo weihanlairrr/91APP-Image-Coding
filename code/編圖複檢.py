@@ -20,7 +20,6 @@ from collections import Counter, defaultdict
 from PIL import Image, ImageOps, ImageDraw, ImageFont, UnidentifiedImageError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
 def tab2():
     # =============================================================================
     # 協助函式 - 錯誤處理與初始化
@@ -330,18 +329,18 @@ def tab2():
         df_folder = df[df.iloc[:, 0].astype(str).str.strip() == norm_folder]
         base_name = os.path.splitext(image_file)[0]
         for idx, row in df_folder.iterrows():
-            prefix_val = fix_code(row.iloc[4])
-            number_val = fix_code(row.iloc[5])
+            prefix_val = fix_code(row.iloc[5])
+            number_val = fix_code(row.iloc[6])
             combined = prefix_val + number_val
             if combined == base_name:
-                description = str(row.iloc[3])
+                description = str(row.iloc[4])
                 return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m", "上腳"]) else "平拍"
         for idx, row in df_folder.iterrows():
-            original_full_filename = str(row.iloc[1]).strip()
+            original_full_filename = str(row.iloc[2]).strip()
             orig_filename_only = os.path.basename(original_full_filename.replace("\\", "/"))
             orig_text = os.path.splitext(orig_filename_only)[0]
             if base_name in orig_text:
-                description = str(row.iloc[3])
+                description = str(row.iloc[4])
                 return "模特" if any(keyword in description for keyword in ["模特", "_9", "-0m"]) else "平拍"
         return "無"
 
@@ -374,11 +373,11 @@ def tab2():
                     tmp_map = {}
                     for idx, row in df_result.iterrows():
                         folder_name = str(row.iloc[0]).strip()
-                        original_full_filename = str(row.iloc[1]).strip()
+                        original_full_filename = str(row.iloc[2]).strip()
                         orig_filename_only = os.path.basename(original_full_filename.replace("\\", "/"))
                         orig_text = os.path.splitext(orig_filename_only)[0]
-                        prefix_val = fix_code(row.iloc[4])
-                        number_val = fix_code(row.iloc[5])
+                        prefix_val = fix_code(row.iloc[5])
+                        number_val = fix_code(row.iloc[6])
                         key = (folder_name, number_val if prefix_val == "" else prefix_val + number_val)
                         tmp_map[key] = orig_text
                     mapping = tmp_map
@@ -530,8 +529,8 @@ def tab2():
         current_flat = int(st.session_state.get(flat_images_key, 0))
         new_model = current_model - removed_model_count + added_model_count
         new_flat = current_flat - removed_flat_count + added_flat_count
-        st.session_state[model_images_key] = str(new_model)
-        st.session_state[flat_images_key] = str(new_flat)
+        st.session_state[model_images_key] = str(max(0, new_model))
+        st.session_state[flat_images_key] = str(max(0, new_flat))
 
         ad_images_key = f"{selected_folder}_ad_images"
         ad_images_value = st.session_state.get(ad_images_key)
@@ -568,11 +567,11 @@ def tab2():
                     tmp_map = {}
                     for idx, row in df_result.iterrows():
                         folder_name = str(row.iloc[0]).strip()
-                        original_full_filename = str(row.iloc[1]).strip()
+                        original_full_filename = str(row.iloc[2]).strip()
                         orig_filename_only = os.path.basename(original_full_filename.replace("\\", "/"))
                         orig_text = os.path.splitext(orig_filename_only)[0]
-                        prefix_val = fix_code(row.iloc[4])
-                        number_val = fix_code(row.iloc[5])
+                        prefix_val = fix_code(row.iloc[5])
+                        number_val = fix_code(row.iloc[6])
                         key = (folder_name, number_val if prefix_val == "" else prefix_val + number_val)
                         tmp_map[key] = orig_text
                     mapping = tmp_map
@@ -683,8 +682,8 @@ def tab2():
             current_flat = int(st.session_state.get(flat_images_key, 0))
             new_model = current_model - removed_model_count + added_model_count
             new_flat = current_flat - removed_flat_count + added_flat_count
-            st.session_state[model_images_key] = str(new_model)
-            st.session_state[flat_images_key] = str(new_flat)
+            st.session_state[model_images_key] = str(max(0, new_model))
+            st.session_state[flat_images_key] = str(max(0, new_flat))
 
             if selected_folder not in st.session_state['filename_changes']:
                 st.session_state['filename_changes'][selected_folder] = {}
@@ -716,188 +715,264 @@ def tab2():
     # 協助函式 - 壓縮與檔案讀取
     # =============================================================================
     def parallel_read_zip_compress():
+        def fix_code(x):
+            return "" if pd.isna(x) else str(x).strip()
+    
+        excel_file_path = None
+        found_excel_name = None
+        for f in os.listdir(tmpdirname):
+            if f.lower().endswith('.xlsx') and '編圖結果' in f:
+                excel_file_path = os.path.join(tmpdirname, f)
+                found_excel_name = f
+                break
+    
+        review_rows = []
+        record_map = {}
+        brand_name = ""
+        if found_excel_name and found_excel_name.endswith("編圖結果.xlsx"):
+            brand_name = found_excel_name[:-len("編圖結果.xlsx")]
+    
+        excel_sheets = {}
+        if excel_file_path and os.path.exists(excel_file_path):
+            try:
+                excel_sheets = pd.read_excel(excel_file_path, sheet_name=None, dtype=str)
+            except:
+                excel_sheets = {}
+    
+        if "編圖紀錄" in excel_sheets:
+            df_result = excel_sheets["編圖紀錄"].fillna("")
+            for _, row in df_result.iterrows():
+                folder_name = fix_code(row.iloc[0])
+                subfolder = fix_code(row.iloc[1])
+                original_file_col = fix_code(row.iloc[2])
+                category = fix_code(row.iloc[3])
+                angle = fix_code(row.iloc[4])
+                prefix_val = fix_code(row.iloc[5])
+                number_val = fix_code(row.iloc[6])
+                ext_ = os.path.splitext(original_file_col)[1]
+                original_filename = f"{prefix_val}{number_val}{ext_}" if number_val else original_file_col
+                norm_folder = folder_name.strip()
+                record_map[(norm_folder, original_filename)] = (folder_name, subfolder, category, angle)
+        else:
+            df_result = None
+    
         all_files = []
-        top_level_files = [
-            name for name in os.listdir(tmpdirname)
-            if os.path.isfile(os.path.join(tmpdirname, name))
-        ]
+        top_level_files = [n for n in os.listdir(tmpdirname) if os.path.isfile(os.path.join(tmpdirname, n))]
         for file_name in top_level_files:
             file_path = os.path.join(tmpdirname, file_name)
-            arcname = file_name
             if file_name != '編圖結果.xlsx':
-                all_files.append((file_path, arcname))
-
+                all_files.append((file_path, file_name))
+    
         for folder_name in top_level_folders:
-            folder_path = os.path.join(tmpdirname, folder_name)
-            for root, dirs, files in os.walk(folder_path):
+            for root, _, files in os.walk(os.path.join(tmpdirname, folder_name)):
                 if "_MACOSX" in root or tmp_dir_for_others in root:
                     continue
                 for file in files:
                     full_path = os.path.join(root, file)
                     rel_path = os.path.relpath(full_path, tmpdirname)
-                    path_parts = rel_path.split(os.sep)
-                    original_file = file
-
                     if (folder_name in st.session_state['filename_changes']
-                            and original_file in st.session_state['filename_changes'][folder_name]):
-                        data = st.session_state['filename_changes'][folder_name][original_file]
-                        new_filename = data['new_filename']  # 使用者最終想要改的檔名
+                            and file in st.session_state['filename_changes'][folder_name]):
+                        data = st.session_state['filename_changes'][folder_name][file]
+                        new_filename = data['new_filename']
                         if new_filename.strip() == '':
-                            outer_key = f"outer_{folder_name}_{original_file}"
-                            if (outer_key in st.session_state and 
-                                st.session_state[outer_key].strip() != ""):
-                                modified_filename = (
-                                    st.session_state[outer_key].strip() 
-                                    + os.path.splitext(original_file)[1]
-                                )
-                            else:
-                                original_dict = st.session_state.get('original_filename', {}).get(folder_name, {})
-                                real_original_name = original_dict.get(original_file, "").strip()
-                                if real_original_name:
-                                    modified_filename = (
-                                        real_original_name 
-                                        + os.path.splitext(original_file)[1]
-                                    )
+                            outer_key = f"outer_{folder_name}_{file}"
+                            if (outer_key in st.session_state and st.session_state[outer_key].strip() != ""):
+                                mod_file = st.session_state[outer_key].strip() + os.path.splitext(file)[1]
+                                if os.path.exists(os.path.join(tmpdirname, folder_name, '2-IMG')):
+                                    new_rel_path = os.path.join(folder_name, '2-IMG', mod_file)
                                 else:
-                                    modified_filename = original_file
-                            new_rel_path = os.path.join(folder_name, modified_filename)
+                                    new_rel_path = os.path.join(folder_name, '1-Main', 'All', mod_file)
+                            else:
+                                new_rel_path = os.path.join(folder_name, file)
                         else:
-                            if len(path_parts) == 2:
+                            p = rel_path.split(os.sep)
+                            if len(p) == 2:
                                 if os.path.exists(os.path.join(tmpdirname, folder_name, '2-IMG')):
                                     new_rel_path = os.path.join(folder_name, '2-IMG', new_filename)
                                 else:
                                     new_rel_path = os.path.join(folder_name, '1-Main', 'All', new_filename)
                             else:
                                 if os.path.exists(os.path.join(tmpdirname, folder_name, '2-IMG')):
-                                    idx = path_parts.index(folder_name)
-                                    path_parts = path_parts[:idx+1] + ['2-IMG', new_filename]
+                                    i = p.index(folder_name)
+                                    p = p[:i+1] + ['2-IMG', new_filename]
                                 else:
-                                    idx = path_parts.index(folder_name)
-                                    path_parts = path_parts[:idx+1] + ['1-Main', 'All', new_filename]
-                                new_rel_path = os.path.join(*path_parts)
+                                    i = p.index(folder_name)
+                                    p = p[:i+1] + ['1-Main', 'All', new_filename]
+                                new_rel_path = os.path.join(*p)
                         all_files.append((full_path, new_rel_path))
                     else:
                         all_files.append((full_path, rel_path))
-
+    
         file_data_map = {}
-        with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
-            futures = {
-                executor.submit(lambda p: open(p, 'rb').read(), f[0]): f
-                for f in all_files
-            }
-            for future in as_completed(futures):
-                fpath, arc = futures[future]
+        with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as ex:
+            futs = {ex.submit(lambda p: open(p, 'rb').read(), f[0]): f for f in all_files}
+            for fu in as_completed(futs):
+                fpath, arc = futs[fu]
                 try:
-                    file_data_map[(fpath, arc)] = future.result()
+                    file_data_map[(fpath, arc)] = fu.result()
                 except Exception as e:
                     st.error(f"讀取檔案時發生錯誤 {fpath}: {str(e)}")
-
+    
         zip_buffer = BytesIO()
+        pat_2img = re.compile(r'^[A-Za-z][A-Za-z0-9]{0,4}$')
+    
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for (file_path, arcname), data_bytes in file_data_map.items():
-                ct = get_compress_type(file_path)
-                info = zipfile.ZipInfo(arcname)
+            for (fp, arc), dat in file_data_map.items():
+                ct = get_compress_type(fp)
+                info = zipfile.ZipInfo(arc)
                 if ct == zipfile.ZIP_DEFLATED:
-                    zipf.writestr(info, data_bytes, compress_type=ct, compresslevel=1)
+                    zipf.writestr(info, dat, compress_type=ct, compresslevel=1)
                 else:
-                    zipf.writestr(info, data_bytes, compress_type=ct)
-
+                    zipf.writestr(info, dat, compress_type=ct)
             merge_temporary_directory_to_zip(zipf, tmp_dir_for_others)
-
             excel_buffer = BytesIO()
+    
             if "編圖紀錄" in excel_sheets:
                 df_result = excel_sheets["編圖紀錄"]
-                if "編號" in df_result.columns:
-                    def fix_code(x):
-                        if pd.isna(x):
-                            return ""
-                        s = str(x)
-                        if s.endswith(".0"):
-                            s = s[:-2]
-                        return s.zfill(2)
-                    df_result["編號"] = df_result["編號"].apply(fix_code)
-                excel_sheets["編圖紀錄"] = df_result
-            if excel_sheets:
-                result_df = excel_sheets.get('編圖張數與廣告圖', pd.DataFrame(columns=['資料夾', '張數', '廣告圖']))
-                for idx, row in result_df.iterrows():
-                    data_folder_name = str(row['資料夾'])
-                    if data_folder_name in st.session_state['folder_values']:
-                        num_images = st.session_state['folder_values'][data_folder_name]['張數']
-                        ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
-                        ad_images = f"{int(ad_images):02}"
-                        result_df.at[idx, '張數'] = num_images
-                        result_df.at[idx, '廣告圖'] = ad_images
-                existing_folders = set(result_df['資料夾'])
-                for data_folder_name in st.session_state['folder_values']:
-                    if data_folder_name not in existing_folders:
-                        num_images = st.session_state['folder_values'][data_folder_name]['張數']
-                        ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
-                        ad_images = f"{int(ad_images):02}"
-                        new_row = pd.DataFrame([{'資料夾': data_folder_name, '張數': num_images, '廣告圖': ad_images}])
-                        result_df = pd.concat([result_df, new_row], ignore_index=True)
-                excel_sheets['編圖張數與廣告圖'] = result_df
-
-                type_result_df = excel_sheets.get('圖片類型統計', pd.DataFrame(columns=['資料夾', '模特', '平拍']))
-                for idx, row in type_result_df.iterrows():
-                    data_folder_name = str(row['資料夾'])
-                    if data_folder_name in st.session_state['folder_values']:
-                        model_images = st.session_state['folder_values'][data_folder_name]['模特']
-                        flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
-                        type_result_df.at[idx, '模特'] = model_images
-                        type_result_df.at[idx, '平拍'] = flat_images
-                existing_type_folders = set(type_result_df['資料夾'])
-                for data_folder_name in st.session_state['folder_values']:
-                    if data_folder_name not in existing_type_folders:
-                        model_images = st.session_state['folder_values'][data_folder_name]['模特']
-                        flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
-                        new_row = pd.DataFrame([{'資料夾': data_folder_name, '模特': model_images, '平拍': flat_images}])
-                        type_result_df = pd.concat([type_result_df, new_row], ignore_index=True)
-                excel_sheets['圖片類型統計'] = type_result_df
-
-                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                    for sheet_name, df in excel_sheets.items():
-                        df.to_excel(writer, index=False, sheet_name=sheet_name)
-                        workbook = writer.book
-                        worksheet = writer.sheets[sheet_name]
-                        if sheet_name == '編圖紀錄' and '編號' in df.columns:
-                            col_idx = df.columns.get_loc('編號')
-                            text_format = workbook.add_format({'num_format': '@'})
-                            worksheet.set_column(col_idx, col_idx, None, text_format)
-                        if sheet_name == '編圖張數與廣告圖':
-                            text_format = workbook.add_format({'num_format': '@'})
-                            worksheet.set_column(1, 2, None, text_format)
-                        elif sheet_name == '圖片類型統計':
-                            text_format = workbook.add_format({'num_format': '@'})
-                            worksheet.set_column(1, 2, None, text_format)
             else:
-                result_df = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
-                type_result_df = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
-                for data_folder_name in st.session_state['folder_values']:
-                    num_images = st.session_state['folder_values'][data_folder_name]['張數']
-                    ad_images = st.session_state['folder_values'][data_folder_name]['廣告圖']
-                    ad_images = f"{int(ad_images):02}"
-                    new_row = pd.DataFrame([{'資料夾': data_folder_name, '張數': num_images, '廣告圖': ad_images}])
-                    result_df = pd.concat([result_df, new_row], ignore_index=True)
-
-                    model_images = st.session_state['folder_values'][data_folder_name]['模特']
-                    flat_images = st.session_state['folder_values'][data_folder_name]['平拍']
-                    new_type_row = pd.DataFrame([{'資料夾': data_folder_name, '模特': model_images, '平拍': flat_images}])
-                    type_result_df = pd.concat([type_result_df, new_type_row], ignore_index=True)
-
-                with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-                    result_df.to_excel(writer, index=False, sheet_name='編圖張數與廣告圖')
-                    type_result_df.to_excel(writer, index=False, sheet_name='圖片類型統計')
-
-                    workbook = writer.book
-                    ws1 = writer.sheets['編圖張數與廣告圖']
-                    ws2 = writer.sheets['圖片類型統計']
-                    text_format = workbook.add_format({'num_format': '@'})
-                    ws1.set_column(1, 2, None, text_format)
-                    ws2.set_column(1, 2, None, text_format)
-
+                df_result = None
+    
+            if "編圖張數與廣告圖" in excel_sheets:
+                df_ = excel_sheets["編圖張數與廣告圖"]
+                for idx, row in df_.iterrows():
+                    dfn = str(row['資料夾'])
+                    if dfn in st.session_state['folder_values']:
+                        nm = st.session_state['folder_values'][dfn]['張數']
+                        ad = st.session_state['folder_values'][dfn]['廣告圖']
+                        ad = f"{int(ad):02}"
+                        df_.at[idx, '張數'] = nm
+                        df_.at[idx, '廣告圖'] = ad
+                es = set(df_['資料夾'])
+                for dfn in st.session_state['folder_values']:
+                    if dfn not in es:
+                        nm = st.session_state['folder_values'][dfn]['張數']
+                        ad = st.session_state['folder_values'][dfn]['廣告圖']
+                        ad = f"{int(ad):02}"
+                        nr = pd.DataFrame([{'資料夾': dfn, '張數': nm, '廣告圖': ad}])
+                        df_ = pd.concat([df_, nr], ignore_index=True)
+                excel_sheets['編圖張數與廣告圖'] = df_
+            else:
+                df_ = pd.DataFrame(columns=['資料夾', '張數', '廣告圖'])
+                for dfn in st.session_state['folder_values']:
+                    nm = st.session_state['folder_values'][dfn]['張數']
+                    ad = st.session_state['folder_values'][dfn]['廣告圖']
+                    ad = f"{int(ad):02}"
+                    nr = pd.DataFrame([{'資料夾': dfn, '張數': nm, '廣告圖': ad}])
+                    df_ = pd.concat([df_, nr], ignore_index=True)
+                excel_sheets['編圖張數與廣告圖'] = df_
+    
+            if "圖片類型統計" in excel_sheets:
+                tdf = excel_sheets["圖片類型統計"]
+                for idx, row in tdf.iterrows():
+                    dfn = str(row['資料夾'])
+                    if dfn in st.session_state['folder_values']:
+                        md = st.session_state['folder_values'][dfn]['模特']
+                        ft = st.session_state['folder_values'][dfn]['平拍']
+                        tdf.at[idx, '模特'] = md
+                        tdf.at[idx, '平拍'] = ft
+                es2 = set(tdf['資料夾'])
+                for dfn in st.session_state['folder_values']:
+                    if dfn not in es2:
+                        md = st.session_state['folder_values'][dfn]['模特']
+                        ft = st.session_state['folder_values'][dfn]['平拍']
+                        nr = pd.DataFrame([{'資料夾': dfn, '模特': md, '平拍': ft}])
+                        tdf = pd.concat([tdf, nr], ignore_index=True)
+                excel_sheets['圖片類型統計'] = tdf
+            else:
+                tdf = pd.DataFrame(columns=['資料夾', '模特', '平拍'])
+                for dfn in st.session_state['folder_values']:
+                    md = st.session_state['folder_values'][dfn]['模特']
+                    ft = st.session_state['folder_values'][dfn]['平拍']
+                    nr = pd.DataFrame([{'資料夾': dfn, '模特': md, '平拍': ft}])
+                    tdf = pd.concat([tdf, nr], ignore_index=True)
+                excel_sheets['圖片類型統計'] = tdf
+    
+            review_rows = []
+            for (fp, arc) in all_files:
+                p = arc.split(os.sep)
+                if len(p) < 2:
+                    continue
+                fn_ = p[-1]
+                bn, ext = os.path.splitext(fn_)
+                is_1_main_all = False
+                is_2_img = False
+                if len(p) >= 3:
+                    if p[1].lower() == '1-main' and p[2].lower() == 'all':
+                        is_1_main_all = True
+                    elif p[1].lower() == '2-img':
+                        is_2_img = True
+                elif len(p) == 2:
+                    if p[1].lower() == '2-img':
+                        is_2_img = True
+                    elif '1-main' in p[1].lower():
+                        is_1_main_all = True
+                if is_1_main_all:
+                    pass
+                elif is_2_img:
+                    if not pat_2img.match(bn):
+                        continue
+                else:
+                    continue
+    
+                folder_nm = p[0]
+                norm_folder = folder_nm
+                if norm_folder.endswith("_OK"):
+                    norm_folder = norm_folder[:-3]
+                org_name = None
+                chg = st.session_state['filename_changes'].get(folder_nm, {})
+                found_old = False
+                for ofile, d in chg.items():
+                    if d['new_filename'] == fn_:
+                        org_name = ofile
+                        found_old = True
+                        break
+                if not found_old:
+                    org_name = fn_
+                key_ = (norm_folder, org_name)
+                if key_ not in record_map:
+                    continue
+                fv, sv, catv, angv = record_map[key_]
+                if sv.replace('/', '\\').lower() == '1-main\\all':
+                    fv_ok = fv + "_OK"
+                else:
+                    fv_ok = fv
+                sv_ = sv.replace('/', '\\').strip()
+                if sv_:
+                    full_path_str = f"{fv_ok}\\{sv_}\\{fn_}"
+                else:
+                    full_path_str = f"{fv_ok}\\{fn_}"
+    
+                review_rows.append({
+                    "圖片": full_path_str,
+                    "品牌": brand_name,
+                    "商品分類": catv,
+                    "角度": angv
+                })
+    
+            df_review = pd.DataFrame(review_rows, columns=["圖片", "品牌", "商品分類", "角度"])
+            excel_sheets["編圖複檢結果"] = df_review
+    
+            with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as w:
+                for sn, dfr in excel_sheets.items():
+                    if dfr is None:
+                        dfr = pd.DataFrame()
+                    dfr.to_excel(w, index=False, sheet_name=sn)
+                    wb = w.book
+                    ws = w.sheets[sn]
+                    if sn == '編圖紀錄' and '編號' in dfr.columns:
+                        cidx = dfr.columns.get_loc('編號')
+                        tf = wb.add_format({'num_format': '@'})
+                        ws.set_column(cidx, cidx, None, tf)
+                    if sn == '編圖張數與廣告圖':
+                        tf = wb.add_format({'num_format': '@'})
+                        ws.set_column(1, 2, None, tf)
+                    elif sn == '圖片類型統計':
+                        tf = wb.add_format({'num_format': '@'})
+                        ws.set_column(1, 2, None, tf)
+    
             excel_buffer.seek(0)
             zipf.writestr(found_excel_name if found_excel_name else '編圖結果.xlsx', excel_buffer.getvalue())
-
+    
         zip_buffer.seek(0)
         return zip_buffer
 
@@ -1257,7 +1332,7 @@ def tab2():
                         basename, ext = os.path.splitext(image_file)
                         basename_to_extensions[basename].append(ext.lower())
                     with st.form(f"filename_form_{selected_folder}"):
-                        colAA, colBB, colCC = st.columns([17, 0.01, 1.8])
+                        colAA, colBB, colCC = st.columns([17, 0.01, 1.5])
                         with colAA:
                             cols = st.columns(7)
                             for idx, image_file in enumerate(desired_images):
@@ -1313,7 +1388,7 @@ def tab2():
                                     st.session_state[flat_images_key] = flat_images_default
                                 upper_limit = len(desired_images) + len(excluded_images)
                                 num_images_options = [str(i) for i in range(0, upper_limit + 1)]
-                                ad_images_options = [str(i) for i in range(0, upper_limit + 1)]
+                                ad_images_options = [str(i) for i in range(1, upper_limit + 1)]
                                 type_images_options = [str(i) for i in range(0, upper_limit + 1)]
                                 with colCC:
                                     st.selectbox('張數', num_images_options, key=num_images_key)
@@ -1363,6 +1438,7 @@ def tab2():
                                     col.text_input('檔名', value=modified_text, key=text_input_key)
                         if st.session_state.get('has_duplicates'):
                             colB.warning(f"檔名重複: {', '.join(st.session_state['duplicate_filenames'])}")
+                            
                     if st.checkbox("所有資料夾均確認完成"):
                         st.write("\n")
                         with st.spinner('檔案處理中...'):
