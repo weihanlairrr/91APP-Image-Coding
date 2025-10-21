@@ -9,15 +9,17 @@ import functools
 import subprocess
 import stat
 import concurrent.futures
-import fitz
+import pymupdf
 import torch
 import pickle
+import urllib.request 
 from io import BytesIO
 from psd_tools import PSDImage
 from PIL import Image, ImageOps, ImageDraw, ImageFont, UnidentifiedImageError
 from concurrent.futures import ThreadPoolExecutor
 from torchvision import models, transforms
 from torchvision.models import ResNet50_Weights
+from streamlit_extras.stylable_container import stylable_container
 
 def tab3():
     """
@@ -39,17 +41,17 @@ def tab3():
         會清除前一次的 selectbox 狀態紀錄（包含 angle 與商品分類）。
         """
         if mode in ("clear_cache", "both"):
-            if os.path.exists(fixed_cache_base_dir):
-                shutil.rmtree(fixed_cache_base_dir, ignore_errors=False, onerror=on_rm_error)
-            os.makedirs(fixed_cache_base_dir, exist_ok=True)
-            os.makedirs(fixed_psd_cache_dir, exist_ok=True)
-            os.makedirs(fixed_ai_cache_dir, exist_ok=True)
-            os.makedirs(fixed_custom_tmpdir, exist_ok=True)
+            if os.path.exists(cache_base_dir):
+                shutil.rmtree(cache_base_dir, ignore_errors=False, onerror=on_rm_error)
+            os.makedirs(cache_base_dir, exist_ok=True)
+            os.makedirs(psd_cache_dir, exist_ok=True)
+            os.makedirs(ai_cache_dir, exist_ok=True)
+            os.makedirs(custom_tmp_dir, exist_ok=True)
         if mode in ("reinitialize", "both"):
             keys = [
-                'image_cache', 'file_uploader_key3', 'text_area_key3', 'modified_folders',
+                'image_cache', 'modified_folders',
                 'previous_input_path', 'file_uploader_disabled_3', 'text_area_disabled_3',
-                "custom_tmpdir", 'previous_selected_folder', 'source_loaded',
+                'custom_tmpdir', 'previous_selected_folder', 'source_loaded',
                 'angle_changes', 'category_selection'
             ]
             for key in keys:
@@ -66,13 +68,12 @@ def tab3():
             'previous_input_path': None,
             'file_uploader_disabled_3': False,
             'text_area_disabled_3': False,
-            "custom_tmpdir": fixed_custom_tmpdir,
+            'custom_tmpdir': custom_tmp_dir,
             'previous_selected_folder': None,
             'source_loaded': False,
         }
         for key, value in defaults.items():
             st.session_state.setdefault(key, value)
-        # 已清除所有 selectbox 狀態，包括 angle_changes 與 category_selection
 
     # =============================================================================
     # 協助函式 - 多執行緒複製目錄
@@ -106,7 +107,7 @@ def tab3():
     # =============================================================================
     def handle_file_uploader_change_tab3():
         initialize_tab3(mode="both")
-        st.session_state["custom_tmpdir"] = fixed_custom_tmpdir
+        st.session_state["custom_tmpdir"] = custom_tmp_dir
         file_key = 'file_uploader_' + str(st.session_state.get('file_uploader_key3', 0))
         uploaded_file_1 = st.session_state.get(file_key, None)
         if uploaded_file_1:
@@ -116,7 +117,7 @@ def tab3():
 
     def handle_text_area_change_tab3():
         initialize_tab3(mode="both")
-        st.session_state["custom_tmpdir"] = fixed_custom_tmpdir
+        st.session_state["custom_tmpdir"] = custom_tmp_dir
         text_key = 'text_area_' + str(st.session_state.get('text_area_key3', 0))
         text_content = st.session_state.get(text_key, "").strip()
         st.session_state['image_cache'].clear()
@@ -156,8 +157,8 @@ def tab3():
         """
         載入並處理圖片，依副檔名做不同處理，並回傳 1000x1000 的圖片。
         """
-        psd_cache = fixed_psd_cache_dir
-        ai_cache = fixed_ai_cache_dir
+        psd_cache = psd_cache_dir
+        ai_cache = ai_cache_dir
         ext = os.path.splitext(image_path)[1].lower()
         if ext == '.psd':
             os.makedirs(psd_cache, exist_ok=True)
@@ -182,7 +183,7 @@ def tab3():
                 image = Image.open(cache_path)
             else:
                 try:
-                    doc = fitz.open(image_path)
+                    doc = pymupdf.open(image_path)
                     page = doc.load_page(0)
                     pix = page.get_pixmap(dpi=100)
                     image = Image.open(BytesIO(pix.tobytes("png")))
@@ -191,8 +192,8 @@ def tab3():
                 except Exception as e:
                     raise Exception(f"無法處理 .ai 檔案: {str(e)}")
         else:
-            # 一般圖片
             image = Image.open(image_path)
+
         if image.mode in ('RGBA', 'LA'):
             image = image.convert('RGBA')
             pad_color = (255, 255, 255, 0)
@@ -221,50 +222,13 @@ def tab3():
             return ""
         return str(val).strip()
 
-    def setup_temporary_directory(base_path, tmp_dir, read_folder):
-        if os.path.exists(tmp_dir):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        os.makedirs(tmp_dir, exist_ok=True)
-        for root, dirs, files in os.walk(base_path):
-            if tmp_dir in root:
-                continue
-            is_top_level = os.path.basename(root) in ['1-Main', '2-IMG']
-            is_same_level_as_image_folders = os.path.dirname(root) == base_path
-            for item in dirs:
-                item_path = os.path.join(root, item)
-                relative_path = os.path.relpath(item_path, base_path)
-                if not (is_same_level_as_image_folders and is_top_level):
-                    dest_path = os.path.join(tmp_dir, relative_path)
-                    os.makedirs(dest_path, exist_ok=True)
-            for item in files:
-                item_path = os.path.join(root, item)
-                relative_path = os.path.relpath(item_path, base_path)
-                ext = os.path.splitext(item)[1].lower()
-                if is_same_level_as_image_folders and ext in ['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.psd', ".ai"]:
-                    continue
-                dest_path = os.path.join(tmp_dir, relative_path)
-                try:
-                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                    shutil.copy2(item_path, dest_path)
-                except FileNotFoundError as e:
-                    st.warning(f"無法建立路徑：{dest_path}，錯誤：{str(e)}")
-        for folder_name in os.listdir(tmp_dir):
-            folder_path = os.path.join(tmp_dir, folder_name)
-            if not os.path.isdir(folder_path):
-                continue
-            two_img_path = os.path.join(folder_path, '2-IMG')
-            if os.path.exists(two_img_path):
-                shutil.rmtree(two_img_path)
-            elif os.path.exists(os.path.join(folder_path, '1-Main')):
-                shutil.rmtree(os.path.join(folder_path, '1-Main'))
-
-    def handle_submit_angles(folder, angle_keys):
+    def handle_submit_angles(folder, angle_widget_keys):
         """
         將使用者的角度選擇寫入 session_state，
         並清除該資料夾所有選項的 widget 狀態。
         """
         angle_selections = {}
-        for key, img_rel in angle_keys:
+        for key, img_rel in angle_widget_keys:
             angle_val = st.session_state.get(key, "")
             angle_selections[img_rel] = angle_val
 
@@ -272,7 +236,7 @@ def tab3():
             st.session_state["angle_changes"] = {}
         st.session_state["angle_changes"][folder] = angle_selections
 
-        for key, _ in angle_keys:
+        for key, _ in angle_widget_keys:
             if key in st.session_state:
                 del st.session_state[key]
 
@@ -282,7 +246,7 @@ def tab3():
         """
         使用 ResNet 模型與預處理，萃取圖片特徵。
         """
-        image_tensor = preprocess(image).unsqueeze(0).to(device)
+        image_tensor = image_preprocess(image).unsqueeze(0).to(device)
         with torch.no_grad():
             feats = model(image_tensor).detach().cpu().numpy().flatten()
         return feats
@@ -293,13 +257,13 @@ def tab3():
                 return pickle.load(f)
         return {}
 
-    def remove_duplicates(features_by_category_):
+    def remove_duplicates(features_map):
         """
-        移除 features_by_category_ 中重複的 labeled_features，
+        移除 features_map 中重複的 labeled_features，
         並回傳更新後的資料與刪除筆數。
         """
-        deleted_count_ = 0
-        for b_, categories_ in features_by_category_.items():
+        duplicate_count = 0
+        for b_, categories_ in features_map.items():
             for cat_key, data_ in categories_.items():
                 unique_entries = set()
                 unique_labeled_features = []
@@ -316,9 +280,9 @@ def tab3():
                         unique_entries.add(key_)
                         unique_labeled_features.append(item_)
                     else:
-                        deleted_count_ += 1
-                features_by_category_[b_][cat_key]["labeled_features"] = unique_labeled_features
-        return features_by_category_, deleted_count_
+                        duplicate_count += 1
+                features_map[b_][cat_key]["labeled_features"] = unique_labeled_features
+        return features_map, duplicate_count
 
     def reset_tab3():
         st.session_state['file_uploader_key3'] += 1
@@ -330,10 +294,10 @@ def tab3():
     # =============================================================================
     # 全域變數 - 暫存資料夾路徑設定
     # =============================================================================
-    fixed_cache_base_dir = os.path.join(tempfile.gettempdir(), "streamlit_cache")
-    fixed_psd_cache_dir = os.path.join(fixed_cache_base_dir, "psd_cache")
-    fixed_ai_cache_dir = os.path.join(fixed_cache_base_dir, "ai_cache")
-    fixed_custom_tmpdir = os.path.join(fixed_cache_base_dir, "custom_tmpdir")
+    cache_base_dir = os.path.join(tempfile.gettempdir(), "streamlit_cache")
+    psd_cache_dir = os.path.join(cache_base_dir, "psd_cache")
+    ai_cache_dir = os.path.join(cache_base_dir, "ai_cache")
+    custom_tmp_dir = os.path.join(cache_base_dir, "custom_tmpdir")
 
     # =============================================================================
     # 介面初始化與檔案上傳/資料夾路徑輸入
@@ -341,28 +305,232 @@ def tab3():
     initialize_tab3()
     st.write("\n")
     col1, col2 = st.columns(2, vertical_alignment="top")
-    uploaded_file_3 = col1.file_uploader(
-        "上傳編圖結果 ZIP 檔",
-        type=["zip"],
-        key='file_uploader_' + str(st.session_state['file_uploader_key3']),
-        disabled=st.session_state['file_uploader_disabled_3'],
-        on_change=handle_file_uploader_change_tab3,
-        label_visibility="collapsed"
-    )
-    input_path_3 = col2.text_area(
-        "   輸入資料夾路徑",
-        height=68,
-        key='text_area_' + str(st.session_state['text_area_key3']),
-        disabled=st.session_state['text_area_disabled_3'],
-        on_change=handle_text_area_change_tab3,
-        placeholder="  輸入分包資料夾路徑",
-        label_visibility="collapsed"
-    )
+    with col1:
+        with stylable_container(
+            key="file_uploader",
+            css_styles="""
+            {
+              [data-testid='stFileUploaderDropzoneInstructions'] > div > span {
+                display: none;
+              }
+              [data-testid='stFileUploaderDropzoneInstructions'] > div::before {
+                content: '上傳 ZIP 或 EXCEL';
+              }
+            }
+            """,
+            ):
+            uploaded_file_3 = st.file_uploader(
+                "上傳編圖結果 ZIP 或 XLSX 檔",
+                type=["zip", "xlsx"],
+                key='file_uploader_' + str(st.session_state['file_uploader_key3']),
+                disabled=st.session_state['file_uploader_disabled_3'],
+                on_change=handle_file_uploader_change_tab3,
+                label_visibility="collapsed"
+            )
+    with col2: 
+        input_path_3 = st.text_area(
+            "   輸入資料夾路徑",
+            height=68,
+            key='text_area_' + str(st.session_state['text_area_key3']),
+            disabled=st.session_state['text_area_disabled_3'],
+            on_change=handle_text_area_change_tab3,
+            placeholder="  輸入分包資料夾路徑",
+            label_visibility="collapsed"
+        )
 
     if uploaded_file_3 or input_path_3:
         tmpdirname = st.session_state["custom_tmpdir"]
+
+        # 1) 處理 user 上傳的 .xlsx（跳過原本的 form 與 popover）
+        if uploaded_file_3 and uploaded_file_3.name.lower().endswith(".xlsx"):
+            # 讀取使用者已完成的結果表
+            try:
+                df_upload = pd.read_excel(uploaded_file_3)
+            except Exception as e:
+                st.error(f"讀取上傳的 Excel 時發生錯誤：{e}")
+                st.stop()
+            required_cols = ["URL", "品牌", "商品分類", "角度", "編號"]
+            if list(df_upload.columns) != required_cols:
+                st.error("上傳的 Excel 欄位與格式不符，請確認欄位為 URL、品牌、商品分類、角度、編號")
+                st.stop()
+            df_complete = df_upload.dropna(subset=required_cols)
+            df_complete = df_complete[
+                df_complete[required_cols]
+                .applymap(lambda x: str(x).strip() != "")
+                .all(axis=1)
+            ]
+            if df_complete.empty:
+                st.error("您所上傳的檔案缺少資料，請補正後重新上傳")
+                st.stop()
+            # 顯示上傳內容
+            st.dataframe(df_upload, use_container_width=True, hide_index=True,height=457)
+            # 開始執行按鈕
+            button_placeholder = st.empty()
+            with button_placeholder:
+                start_running = st.button('開始執行', key='start_running_from_xlsx')
+            if start_running:
+                button_placeholder.empty()
+                st.write("\n")
+                df_final = df_upload
+                # 品牌取第一筆資料
+                brand = df_upload["品牌"].dropna().iloc[0]
+
+                # ---------------------
+                # 進入 ResNet 特徵萃取流程（與原本相同）
+                # ---------------------
+                if torch.backends.mps.is_available():
+                    device = "mps"
+                elif torch.cuda.is_available():
+                    device = "cuda"
+                else:
+                    device = "cpu"
+
+                weights = ResNet50_Weights.DEFAULT
+                resnet = models.resnet50(weights=weights)
+                resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
+                resnet.eval().to(device)
+
+                image_preprocess = transforms.Compose([
+                    transforms.Resize(256),
+                    transforms.CenterCrop(224),
+                    transforms.ToTensor(),
+                    transforms.Normalize(
+                        mean=[0.485, 0.456, 0.406],
+                        std=[0.229, 0.224, 0.225]
+                    ),
+                ])
+                dep_dir = os.path.join(
+                    r"G:\共用雲端硬碟\TP代營運\1-小工具\自動編圖工具\dependencies",
+                    brand
+                )
+                # 偵測 mapping Excel 檔案
+                mapping_files = [
+                    f for f in os.listdir(dep_dir)
+                    if f.lower().endswith('.xlsx') and '檔名角度對照表' in f
+                ]
+                pkl_path = os.path.join(dep_dir, f"{brand}_image_features.pkl")
+                if mapping_files and not os.path.exists(pkl_path):
+                    mapping_df = pd.read_excel(os.path.join(dep_dir, mapping_files[0]))
+                    created = {brand: {}}
+                    for _, row in mapping_df.iterrows():
+                        fname = str(row["對應檔名"]).strip()
+                        cat   = str(row["檔名專屬的商品分類"]).strip()
+                        ang   = str(row["角度"]).strip()
+                        img_path = os.path.join(tmpdirname, fname)
+                        try:
+                            img = Image.open(img_path).convert("RGB")
+                        except Exception as e:
+                            st.warning(f"建立 .pkl 時無法開啟圖片：{fname}，錯誤：{e}")
+                            continue
+                        feat = get_image_features(img, resnet)
+                        if cat not in created[brand]:
+                            created[brand][cat] = {"all_features": [], "labeled_features": []}
+                        num = len(created[brand][cat]["labeled_features"]) + 1
+                        created[brand][cat]["all_features"].append(feat)
+                        created[brand][cat]["labeled_features"].append({
+                            "features": feat,
+                            "labels": {"angle": ang, "number": num}
+                        })
+                    with open(pkl_path, "wb") as f:
+                        pickle.dump(created, f)
+                    
+                progress_bar = st.progress(0)
+                progress_text = st.empty()
+                total = len(df_final)
+                processed_images_count = 0
+
+                for brand_name in df_final["品牌"].unique():
+                    brand_df = df_final[df_final["品牌"] == brand_name]
+                    output_dir = os.path.join(
+                        r"G:\共用雲端硬碟\TP代營運\1-小工具\自動編圖工具\dependencies",
+                        brand_name
+                    )
+                    os.makedirs(output_dir, exist_ok=True)
+
+                    pkl_file_path = os.path.join(output_dir, f"{brand_name}_image_features.pkl")
+                    features_by_category = load_existing_features(pkl_file_path)
+
+                    # 計算舊有資料筆數
+                    original_len = 0
+                    if brand_name in features_by_category:
+                        for cat_key, cat_data in features_by_category[brand_name].items():
+                            original_len += len(cat_data["labeled_features"])
+
+                    for idx, row_ in brand_df.iterrows():
+                        url_ = row_["URL"]
+                        category_ = row_["商品分類"]
+                        angle_ = row_["角度"]
+                        number_ = row_["編號"]
+
+                        # 下載並開啟遠端圖片
+                        try:
+                            with urllib.request.urlopen(url_) as resp:
+                                data = resp.read()
+                            img = Image.open(BytesIO(data)).convert('RGB')
+                        except Exception as e:
+                            st.warning(f"下載或開啟圖片失敗：{url_}，錯誤：{e}")
+                            processed_images_count += 1
+                            progress_bar.progress(int(processed_images_count / total * 100))
+                            progress_text.write(f"正在處理 {processed_images_count} / {total}")
+                            continue
+
+                        image_features = get_image_features(img, resnet)
+
+                        if brand_name not in features_by_category:
+                            features_by_category[brand_name] = {}
+                        if category_ not in features_by_category[brand_name]:
+                            features_by_category[brand_name][category_] = {
+                                "all_features": [],
+                                "labeled_features": []
+                            }
+
+                        features_by_category[brand_name][category_]["all_features"].append(image_features)
+                        features_by_category[brand_name][category_]["labeled_features"].append({
+                            "features": image_features,
+                            "labels": {
+                                "brand": brand_name,
+                                "category": category_,
+                                "angle": angle_,
+                                "number": number_
+                            }
+                        })
+
+                        processed_images_count += 1
+                        progress_bar.progress(int(processed_images_count / total * 100))
+                        progress_text.write(f"正在處理 {processed_images_count} / {total}")
+
+                    # 去重並寫回 pkl
+                    progress_bar.empty()
+                    progress_text.empty()
+
+                    with st.spinner(" 尚未結束，請勿關閉"):
+                        features_by_category, dupe_count = remove_duplicates(features_by_category)
+                        with open(pkl_file_path, 'wb') as f:
+                            pickle.dump(features_by_category, f)
+
+                        # 重新計算去重後的筆數
+                        new_len = 0
+                        if brand_name in features_by_category:
+                            for cat_key, cat_data in features_by_category[brand_name].items():
+                                new_len += len(cat_data["labeled_features"])
+
+                        added_count = new_len - original_len
+
+                        if dupe_count > 0:
+                            st.success(f"{brand_name}圖片資料訓練完成！共新增{added_count}筆資料 (發現{dupe_count}筆重複資料)，總資料數為{new_len}筆")
+                        else:
+                            st.success(f"{brand_name}圖片資料訓練完成！共新增{added_count}筆資料，總資料數為{new_len}筆")
+
+                if st.button("結束", on_click=reset_tab3()):
+                    st.rerun()
+
+            else:
+                st.stop()
+            return  # 完成 .xlsx 分支後結束
+
+        # 2) 原本的 ZIP / 資料夾路徑 分支
         if not st.session_state.get("source_loaded", False):
-            if uploaded_file_3:
+            if uploaded_file_3 and uploaded_file_3.name.lower().endswith(".zip"):
                 with zipfile.ZipFile(uploaded_file_3) as zip_ref:
                     zip_ref.extractall(tmpdirname)
             elif input_path_3:
@@ -391,7 +559,7 @@ def tab3():
             if "編圖複檢結果" in excel_sheets:
                 df_check = excel_sheets["編圖複檢結果"]
             else:
-                st.error("Excel 中未找到 '編圖複檢結果' 工作表。")
+                st.error("此檔案不支援，請上傳複檢後下載的檔案")
                 st.stop()
         else:
             st.error("未找到任何 Excel 檔案。")
@@ -415,7 +583,7 @@ def tab3():
                 dataset_xlsx = os.path.join(brand_dataset_path, file)
                 break
         if not dataset_xlsx:
-            st.error(f"在品牌資料夾中未找到任何 .xlsx 檔案：{brand_dataset_path}")
+            st.error(f"在品牌資料夾中未找到 .xlsx 檔案：{brand_dataset_path}")
             st.stop()
         ds = pd.read_excel(dataset_xlsx, sheet_name=None)
         target_sheet = None
@@ -455,7 +623,7 @@ def tab3():
             img_folder_path = os.path.join(tmpdirname, folder, '2-IMG')
             if not os.path.exists(img_folder_path):
                 img_folder_path = os.path.join(tmpdirname, folder, '1-Main', 'All')
-            tasks = []
+            load_futures = []
             with ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
                 if os.path.exists(img_folder_path):
                     image_files = get_outer_folder_images(img_folder_path)
@@ -464,7 +632,7 @@ def tab3():
                         if image_path not in st.session_state['image_cache'][folder]:
                             add_label = image_file.lower().endswith(('.png', '.tif', '.tiff', '.psd', '.ai'))
                             future = executor.submit(load_and_process_image, image_path, add_label)
-                            tasks.append((future, folder, image_path))
+                            load_futures.append((future, folder, image_path))
                 outer_folder_path = os.path.join(tmpdirname, folder)
                 outer_images = get_outer_folder_images(outer_folder_path)
                 for outer_image_file in outer_images:
@@ -472,8 +640,8 @@ def tab3():
                     if image_path not in st.session_state['image_cache'][folder]:
                         add_label = outer_image_file.lower().endswith(('.png', '.tif', '.tiff', '.psd', '.ai'))
                         future = executor.submit(load_and_process_image, image_path, add_label)
-                        tasks.append((future, folder, image_path))
-                for future, folder_, image_path_ in tasks:
+                        load_futures.append((future, folder, image_path))
+                for future, folder_, image_path_ in load_futures:
                     try:
                         image_ = future.result()
                         st.session_state['image_cache'][folder_][image_path_] = image_
@@ -481,7 +649,7 @@ def tab3():
                         st.warning(f"載入圖片 {image_path_} 時發生錯誤: {str(e)}")
 
         # =============================================================================
-        # 顯示資料夾與角度選擇介面
+        # 顯示資料夾與角度選擇介面（含開啟 Excel 與同步更新 .pkl 編號）
         # =============================================================================
         if top_level_folders:
             if 'previous_selected_folder' not in st.session_state and top_level_folders:
@@ -489,7 +657,7 @@ def tab3():
             if top_level_folders:
                 if 'previous_selected_folder' not in st.session_state:
                     st.session_state['previous_selected_folder'] = None
-                col1_, col2_ = st.columns([7, 1], vertical_alignment="bottom")
+                col1_, col2_,= st.columns([7.5, 1], vertical_alignment="bottom")
                 selected_folder = col1_.pills(
                     "選擇一個資料夾",
                     top_level_folders,
@@ -524,14 +692,16 @@ def tab3():
                     on_change=update_category_callback,
                     label_visibility="collapsed",
                 )
+                
 
+                # 以下為原有的角度選擇 form
                 df_category = target_sheet[target_sheet["商品分類"] == category]
                 angle_options_all = df_category["角度"].dropna().unique().tolist()
                 angle_options_all = [str(a).strip() for a in angle_options_all if str(a).strip() != ""]
                 angle_options_all = [a for a in angle_options_all if re.search(r'[\u4e00-\u9fff]', a)]
                 saved_angles = st.session_state.get("angle_changes", {}).get(selected_folder, {})
-                angle_keys = []
-
+                angle_widget_keys = []
+                
                 with st.form(f"angle_form_{selected_folder}"):
                     cols = st.columns(7)
                     for idx, (_, row) in enumerate(folder_records.iterrows()):
@@ -544,6 +714,9 @@ def tab3():
                             image_ = st.session_state['image_cache'][selected_folder][image_path]
                             col_.image(image_, use_container_width=True)
                         default_angle = saved_angles.get(image_relative_path, row["角度"] if pd.notna(row["角度"]) else "")
+                        # 如果品牌為 ADS 且讀取的角度為 D1～D5，則等同於細節
+                        if brand == "ADS" and default_angle in {"D1", "D2", "D3", "D4", "D5"}:
+                            default_angle = "細節"
                         angle_options_with_skip = ["不訓練"] + angle_options_all
                         if default_angle == "不訓練":
                             default_index = 0
@@ -552,7 +725,7 @@ def tab3():
                         else:
                             default_index = None
                         angle_key = f"{selected_folder}_angle_{image_relative_path}"
-                        angle_keys.append((angle_key, image_relative_path))
+                        angle_widget_keys.append((angle_key, image_relative_path))
                         col_.selectbox(
                             "角度",
                             options=angle_options_with_skip,
@@ -566,10 +739,10 @@ def tab3():
                     colA.form_submit_button(
                         "暫存修改",
                         on_click=handle_submit_angles,
-                        args=(selected_folder, angle_keys)
+                        args=(selected_folder, angle_widget_keys)
                     )
                     with colD.popover("訓練資料預覽"):
-                        final_data = []
+                        preview_records = []
                         for idx_, row_ in df_check.iterrows():
                             url_ = row_["圖片"]
                             brand_ = row_["品牌"] if "品牌" in df_check.columns else ""
@@ -598,56 +771,112 @@ def tab3():
                             if final_angle not in angle_options_final:
                                 continue
                             final_number = angle_map.get((str(final_category).strip(), str(final_angle).strip()), "")
-                            final_data.append({
+                            preview_records.append({
                                 "URL": url_,
                                 "品牌": brand_,
                                 "商品分類": final_category,
                                 "角度": final_angle,
                                 "編號": final_number
                             })
-                        if final_data:
-                            df_result = pd.DataFrame(final_data, columns=["URL", "品牌", "商品分類", "角度", "編號"])
-                            st.dataframe(df_result, use_container_width=True, hide_index=True)
-                            # 將訓練用的 df_result 存到 session_state 供後續使用
-                            st.session_state["df_result"] = df_result
+                        if preview_records:
+                            df_preview = pd.DataFrame(preview_records, columns=["URL", "品牌", "商品分類", "角度", "編號"])
+                            st.dataframe(df_preview, use_container_width=True, hide_index=True)
+                            # 將訓練用的 df_preview 存到 session_state 供後續使用
+                            st.session_state["df_preview"] = df_preview
                         else:
-                            st.warning("沒有任何符合條件的圖片資料。")
+                            st.warning("暫無資料。")
         else:
             st.error("未找到任何資料夾。")
 
         # =============================================================================
-        # ResNet 訓練 (特徵萃取) 邏輯
+        # ResNet 訓練 (特徵萃取) 邏輯 - ZIP 分支
         # =============================================================================
-        if st.checkbox("所有資料夾均確認完成"):
+        colA, colB = st.columns([7.5,1])
+        with colB.popover("新增角度"):
+            col5,col6 = st.columns([3,1],vertical_alignment="center")
+            col5.info("步驟 1: 開啟角度清單 > 在 **工作表2** 新增角度並調整受影響的編號")
+            if col6.button("開啟角度清單", key=f"open_excel_{brand}"):
+                if dataset_xlsx and os.path.exists(dataset_xlsx):
+                    try:
+                        os.startfile(dataset_xlsx)
+                    except Exception as e:
+                        st.error(f"無法開啟檔案：{e}")
+                else:
+                    st.warning(f"找不到檔案：{dataset_xlsx}")
+            
+            col6,col7 = st.columns([3,1],vertical_alignment="center")
+            col6.info("步驟 2: EXCEL修改後儲存關閉 > 點擊 **更新模型資料**")
+            if col7.button("更新模型資料", key=f"sync_pkl_{brand}"):
+                # 設定 pkl 路徑
+                pkl_dir = os.path.join(
+                    r"G:\共用雲端硬碟\TP代營運\1-小工具\自動編圖工具\dependencies",
+                    brand
+                )
+                pkl_file = os.path.join(pkl_dir, f"{brand}_image_features.pkl")
+                if not os.path.exists(pkl_file):
+                    st.error(f"找不到 pkl 檔案：{pkl_file}")
+                else:
+                    with st.spinner("模型資料更新中"):
+                        features_map = load_existing_features(pkl_file)
+                        updated = {}
+                        # 只處理這個品牌的資料
+                        if brand in features_map:
+                            for cat_key, cat_data in features_map[brand].items():
+                                for item in cat_data["labeled_features"]:
+                                    old_num = item["labels"]["number"]
+                                    angle = item["labels"]["angle"]
+                                    category_ = item["labels"]["category"]
+                                    new_num = angle_map.get((category_, angle), old_num)
+                                    if str(new_num) != str(old_num):
+                                        # 登記一次
+                                        key = (category_, angle)
+                                        if key not in updated:
+                                            updated[key] = (old_num, new_num)
+                                        # 更新所有項目的 number
+                                        item["labels"]["number"] = new_num
+                        # 寫回 pkl
+                        with open(pkl_file, 'wb') as f:
+                            pickle.dump(features_map, f)
+                        if updated:
+                            # 將更新內容轉為 DataFrame 顯示
+                            df_updates = pd.DataFrame([{
+                                "商品分類": cat,
+                                "角度": ang,
+                                "修改前編號": old,
+                                "修改後編號": new
+                            } for (cat, ang), (old, new) in updated.items()])
+                            with st.container(height=300):
+                                st.write("更新完成！以下為更新內容：")
+                                st.dataframe(df_updates, use_container_width=True)
+                        else:
+                            st.info("模型資料已是最新版。")
+        if colA.checkbox("所有資料夾均確認完成"):
             button_placeholder = st.empty()
             with button_placeholder:
                 start_running = st.button('開始執行')
             if start_running:
                 button_placeholder.empty()
                 st.write("\n")
-                # 改為直接使用上方 popover 產生的 df_result
-                if "df_result" not in st.session_state or st.session_state["df_result"].empty:
+                # 改為直接使用上方 popover 產生的 df_preview
+                if "df_preview" not in st.session_state or st.session_state["df_preview"].empty:
                     st.warning("沒有任何可訓練的資料.")
                     st.stop()
 
-                df_final = st.session_state["df_result"]
+                df_final = st.session_state["df_preview"]
 
-                # ---------------------
-                # 2) 初始化模型與預處理
-                # ---------------------
                 if torch.backends.mps.is_available():
                     device = "mps"
                 elif torch.cuda.is_available():
                     device = "cuda"
                 else:
                     device = "cpu"
-                
+
                 weights = ResNet50_Weights.DEFAULT
                 resnet = models.resnet50(weights=weights)
                 resnet = torch.nn.Sequential(*list(resnet.children())[:-1])
                 resnet.eval().to(device)
 
-                preprocess = transforms.Compose([
+                image_preprocess = transforms.Compose([
                     transforms.Resize(256),
                     transforms.CenterCrop(224),
                     transforms.ToTensor(),
@@ -656,51 +885,84 @@ def tab3():
                         std=[0.229, 0.224, 0.225]
                     ),
                 ])
-
+                
+                dep_dir = os.path.join(
+                    r"G:\共用雲端硬碟\TP代營運\1-小工具\自動編圖工具\dependencies",
+                    brand
+                )
+                # 偵測 mapping Excel 檔案
+                mapping_files = [
+                    f for f in os.listdir(dep_dir)
+                    if f.lower().endswith('.xlsx') and '檔名角度對照表' in f
+                ]
+                pkl_path = os.path.join(dep_dir, f"{brand}_image_features.pkl")
+                if mapping_files and not os.path.exists(pkl_path):
+                    mapping_df = pd.read_excel(os.path.join(dep_dir, mapping_files[0]))
+                    created = {brand: {}}
+                    for _, row in mapping_df.iterrows():
+                        fname = str(row["對應檔名"]).strip()
+                        cat   = str(row["檔名專屬的商品分類"]).strip()
+                        ang   = str(row["角度"]).strip()
+                        img_path = os.path.join(tmpdirname, fname)
+                        try:
+                            img = Image.open(img_path).convert("RGB")
+                        except Exception as e:
+                            st.warning(f"建立 .pkl 時無法開啟圖片：{fname}，錯誤：{e}")
+                            continue
+                        feat = get_image_features(img, resnet)
+                        if cat not in created[brand]:
+                            created[brand][cat] = {"all_features": [], "labeled_features": []}
+                        num = len(created[brand][cat]["labeled_features"]) + 1
+                        created[brand][cat]["all_features"].append(feat)
+                        created[brand][cat]["labeled_features"].append({
+                            "features": feat,
+                            "labels": {"angle": ang, "number": num}
+                        })
+                    with open(pkl_path, "wb") as f:
+                        pickle.dump(created, f)
+                    
                 progress_bar = st.progress(0)
                 progress_text = st.empty()
                 total = len(df_final)
-                processed_count = 0
+                processed_images_count = 0
 
-                # 3) 依「df_final」資料，分品牌寫入各自的 pkl
                 for brand_name in df_final["品牌"].unique():
                     brand_df = df_final[df_final["品牌"] == brand_name]
 
-                    brand_folder = os.path.join(
+                    output_dir = os.path.join(
                         r"G:\共用雲端硬碟\TP代營運\1-小工具\自動編圖工具\dependencies",
                         brand_name
                     )
-                    os.makedirs(brand_folder, exist_ok=True)
+                    os.makedirs(output_dir, exist_ok=True)
 
-                    pkl_file_path = os.path.join(brand_folder, f"{brand_name}_image_features.pkl")
+                    pkl_file_path = os.path.join(output_dir, f"{brand_name}_image_features.pkl")
                     features_by_category = load_existing_features(pkl_file_path)
 
-                    # 先計算舊有 labeled_features 數量
                     original_len = 0
                     if brand_name in features_by_category:
                         for cat_key, cat_data in features_by_category[brand_name].items():
                             original_len += len(cat_data["labeled_features"])
 
                     for idx, row_ in brand_df.iterrows():
-                        image_path = os.path.join(tmpdirname, row_["URL"])  # 以 df_result 中的相對路徑來取得完整路徑
+                        image_path = os.path.join(tmpdirname, row_["URL"])
                         category_ = row_["商品分類"]
                         angle_ = row_["角度"]
                         number_ = row_["編號"]
 
                         if not os.path.exists(image_path):
                             st.warning(f"找不到檔案：{image_path}")
-                            processed_count += 1
-                            progress_bar.progress(int(processed_count / total * 100))
-                            progress_text.write(f"正在處理 {processed_count} / {total}")
+                            processed_images_count += 1
+                            progress_bar.progress(int(processed_images_count / total * 100))
+                            progress_text.write(f"正在處理 {processed_images_count} / {total}")
                             continue
 
                         try:
                             img = Image.open(image_path).convert('RGB')
                         except UnidentifiedImageError:
                             st.warning(f"無法識別圖片：{image_path}")
-                            processed_count += 1
-                            progress_bar.progress(int(processed_count / total * 100))
-                            progress_text.write(f"正在處理 {processed_count} / {total}")
+                            processed_images_count += 1
+                            progress_bar.progress(int(processed_images_count / total * 100))
+                            progress_text.write(f"正在處理 {processed_images_count} / {total}")
                             continue
 
                         image_features = get_image_features(img, resnet)
@@ -724,11 +986,10 @@ def tab3():
                             }
                         })
 
-                        processed_count += 1
-                        progress_bar.progress(int(processed_count / total * 100))
-                        progress_text.write(f"正在處理 {processed_count} / {total}")
+                        processed_images_count += 1
+                        progress_bar.progress(int(processed_images_count / total * 100))
+                        progress_text.write(f"正在處理 {processed_images_count} / {total}")
 
-                    # 去重並寫回 pkl
                     progress_bar.empty()
                     progress_text.empty()
 
@@ -737,7 +998,6 @@ def tab3():
                         with open(pkl_file_path, 'wb') as f:
                             pickle.dump(features_by_category, f)
 
-                        # 重新計算去重後的 labeled_features 總數量
                         new_len = 0
                         if brand_name in features_by_category:
                             for cat_key, cat_data in features_by_category[brand_name].items():
@@ -746,9 +1006,9 @@ def tab3():
                         added_count = new_len - original_len
 
                         if dupe_count > 0:
-                            st.success(f"{brand_name}圖片資料訓練完成！共新增{added_count}筆資料 (發現{dupe_count}筆重複資料)")
+                            st.success(f"{brand_name}圖片資料訓練完成！共新增{added_count}筆資料 (發現{dupe_count}筆重複資料)，總資料數為{new_len}筆")
                         else:
-                            st.success(f"{brand_name}圖片資料訓練完成！共新增{added_count}筆資料")
+                            st.success(f"{brand_name}圖片資料訓練完成！共新增{added_count}筆資料，總資料數為{new_len}筆")
 
                 if st.button("結束", on_click=reset_tab3()):
                     st.rerun()

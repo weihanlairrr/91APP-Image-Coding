@@ -1,26 +1,26 @@
 custom_css = """
 <style>
 section.stMain {
-    padding-left: 10%; 
-    padding-right: 10%;
+    padding-left: 4%; 
+    padding-right: 4%;
 }
 @media (min-width: 1900px) {
     section.stMain {
-        padding-left: 18%;
-        padding-right: 18%;
+        padding-left: 11%;
+        padding-right: 11%;
     }
 }
 @media (max-width: 1400px) {
     section.stMain {
-        padding-left: 8%;
-        padding-right: 8%;
+        padding-left: 5%;
+        padding-right: 5%;
     }
 }
 div.stTextInput > label {
     display: none;
 }   
 div.block-container {
-    padding-top: 2rem;
+    padding-top: 1.8rem;
 }
 .stButton > button, [data-testid="stFormSubmitButton"] > button {
     padding: 5px 30px;
@@ -63,6 +63,9 @@ header[data-testid="stHeader"] {
 [data-testid="stPopover"] {
     display: flex;
     justify-content: flex-end; 
+}
+[data-testid="stPopoverBody"] {
+   width: 1000px !important;
 }
 [data-testid="stFileUploader"] [data-testid='stBaseButton-secondary'] {
   text-indent: -9999px;
@@ -143,6 +146,23 @@ div[data-testid="stFileUploaderFile"] {
 }
 [data-testid="stTextArea"] {
     margin-bottom: 15px; 
+}
+div[data-baseweb="select"] svg {
+    display: none !important;
+}
+/* 調整選項字體大小 */
+div[data-baseweb="select"] * {
+    font-size: 15px !important;
+    display: flex !important;
+    align-items: center !important;
+}
+div[data-testid="stTooltipHoverTarget"] {
+    font-size: 14px !important;
+}
+@media (min-width: 1900px) {
+    div[data-testid="stTooltipHoverTarget"] {
+        font-size: 15px !important;
+    }
 }
 </style>
 """
